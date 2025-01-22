@@ -4,7 +4,6 @@ import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.ipc.IPCManager;
 import group.gnometrading.objects.MarketUpdateDecoder;
 import group.gnometrading.objects.MessageHeaderDecoder;
-import group.gnometrading.resources.Properties;
 import group.gnometrading.sm.Listing;
 import io.aeron.Subscription;
 import io.aeron.logbuffer.FragmentHandler;
@@ -32,7 +31,6 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
 
     private static final int FRAGMENT_LIMIT = 1;
     private static final String OUTPUT_DIRECTORY = "./market-data/";
-    private static final String S3_BUCKET_KEY = "collector.s3.bucket";
     private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd_HH");
     private static final Logger logger = LoggerFactory.getLogger(MarketUpdateCollector.class);
 
@@ -53,12 +51,12 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
             String streamName,
             S3Client s3Client,
             Listing listing,
-            Properties properties
+            String bucketName
     ) {
         this.s3Client = s3Client;
         this.listing = listing;
+        this.bucketName = bucketName;
         this.subscription = ipcManager.addSubscription(streamName);
-        this.bucketName = properties.getStringProperty(S3_BUCKET_KEY);
         this.purgatory = new ExpandableArrayBuffer(1 << 14);
         this.decoder = new MarketUpdateDecoder();
         this.headerDecoder = new MessageHeaderDecoder();
@@ -73,6 +71,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
+            logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
             cycleFile();
             currentHour = now;
             openNewFile();
