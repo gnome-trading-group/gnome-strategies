@@ -4,6 +4,7 @@ import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.ipc.IPCManager;
 import group.gnometrading.objects.MarketUpdateDecoder;
 import group.gnometrading.objects.MessageHeaderDecoder;
+import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import io.aeron.Subscription;
 import io.aeron.logbuffer.FragmentHandler;
@@ -40,6 +41,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
     private final MessageHeaderDecoder headerDecoder;
     private final Listing listing;
     private final String bucketName;
+    private final SchemaType schemaType;
     private final ExpandableArrayBuffer purgatory;
 
     private ZstdOutputStream currentFileStream;
@@ -51,11 +53,13 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
             String streamName,
             S3Client s3Client,
             Listing listing,
-            String bucketName
+            String bucketName,
+            SchemaType schemaType
     ) {
         this.s3Client = s3Client;
         this.listing = listing;
         this.bucketName = bucketName;
+        this.schemaType = schemaType;
         this.subscription = ipcManager.addSubscription(streamName);
         this.purgatory = new ExpandableArrayBuffer(1 << 14);
         this.decoder = new MarketUpdateDecoder();
@@ -102,11 +106,9 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
     }
 
     private String buildKey(final String fileName) {
-        String[] parts = fileName.substring(0, fileName.lastIndexOf('.')).split("_");
-        String name = (
-                this.listing.exchangeSecuritySymbol() == null || this.listing.exchangeSecuritySymbol().isEmpty()
-        ) ? "dump" : this.listing.exchangeSecuritySymbol();
-        return listing.exchangeId() + "/" + listing.securityId() + "/" + parts[0] + "/" + parts[1] + "/" + name + ".zst";
+        String date = fileName.substring(0, fileName.lastIndexOf('.'));
+        String name = this.schemaType.getIdentifier();
+        return "%d/%d/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), date, name);
     }
 
     private void uploadToS3(final String filePath) {

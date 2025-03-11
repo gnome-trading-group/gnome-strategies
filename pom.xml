@@ -37,8 +37,8 @@
     <dependencies>
         <dependency>
             <groupId>group.gnometrading</groupId>
-            <artifactId>sbe-objects</artifactId>
-            <version>1.2.22</version>
+            <artifactId>gnome-orchestrator</artifactId>
+            <version>1.0.1</version>
         </dependency>
         <dependency>
             <groupId>group.gnometrading</groupId>
@@ -49,6 +49,11 @@
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-registry</artifactId>
             <version>1.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>group.gnometrading</groupId>
+            <artifactId>gnome-schemas</artifactId>
+            <version>1.0.1</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
