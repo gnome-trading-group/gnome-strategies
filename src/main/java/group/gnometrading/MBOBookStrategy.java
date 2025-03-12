@@ -1,7 +1,7 @@
 package group.gnometrading;
 
 import group.gnometrading.books.MBOBook;
-import group.gnometrading.objects.MarketUpdateDecoder;
+import group.gnometrading.schemas.MBODecoder;
 import io.aeron.Subscription;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
@@ -14,12 +14,12 @@ public abstract class MBOBookStrategy implements Agent, FragmentHandler {
 
     private final MBOBook book;
     private final Subscription subscription;
-    private final MarketUpdateDecoder marketUpdateDecoder;
+    private final MBODecoder mboDecoder;
 
     public MBOBookStrategy(final MBOBook book, final Subscription subscription) {
         this.book = book;
         this.subscription = subscription;
-        this.marketUpdateDecoder = new MarketUpdateDecoder();
+        this.mboDecoder = new MBODecoder();
     }
 
     @Override
@@ -34,9 +34,9 @@ public abstract class MBOBookStrategy implements Agent, FragmentHandler {
 
     @Override
     public void onFragment(DirectBuffer buffer, int offset, int length, Header header) {
-        this.marketUpdateDecoder.wrap(buffer, offset, length, MarketUpdateDecoder.SCHEMA_ID);
+        this.mboDecoder.wrap(buffer, offset, length, MBODecoder.SCHEMA_ID);
 
-        if (this.book.apply(this.marketUpdateDecoder)) {
+        if (this.book.apply(this.mboDecoder)) {
             onBookUpdate();
         } else {
             onOrderUpdate();

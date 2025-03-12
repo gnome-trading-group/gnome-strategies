@@ -3,11 +3,11 @@ package group.gnometrading.books;
 import group.gnometrading.annotations.VisibleForTesting;
 import group.gnometrading.collections.LongHashMap;
 import group.gnometrading.collections.LongMap;
-import group.gnometrading.objects.MarketUpdateDecoder;
-import group.gnometrading.objects.Side;
 import group.gnometrading.pools.Pool;
 import group.gnometrading.pools.PoolNode;
 import group.gnometrading.pools.SingleThreadedObjectPool;
+import group.gnometrading.schemas.MBODecoder;
+import group.gnometrading.schemas.Side;
 
 public class MBOBook {
 
@@ -44,18 +44,18 @@ public class MBOBook {
         }
     }
 
-    public boolean apply(final MarketUpdateDecoder marketUpdateDecoder) {
-        switch (marketUpdateDecoder.action()) {
+    public boolean apply(final MBODecoder mboDecoder) {
+        switch (mboDecoder.action()) {
             case Add -> {
-                insert(marketUpdateDecoder);
+                insert(mboDecoder);
                 return true;
             }
             case Cancel -> {
-                cancel(marketUpdateDecoder, false);
+                cancel(mboDecoder, false);
                 return true;
             }
             case Modify -> {
-                modify(marketUpdateDecoder);
+                modify(mboDecoder);
                 return true;
             }
             // TODO: Support Clear?
@@ -63,16 +63,16 @@ public class MBOBook {
         return false;
     }
 
-    private Order createOrder(final MarketUpdateDecoder marketUpdateDecoder) {
+    private Order createOrder(final MBODecoder mboDecoder) {
         PoolNode<Order> orderPoolNode = orderPool.acquire();
         var order = orderPoolNode.getItem();
 
-        order.orderId = marketUpdateDecoder.orderId();
-        order.isBid = marketUpdateDecoder.side() == Side.Buy;
-        order.shares = marketUpdateDecoder.size(); // uint32
-        order.limitPrice = marketUpdateDecoder.price();
-        order.entryTime = marketUpdateDecoder.timestampRecv();
-        order.eventTime = marketUpdateDecoder.timestampEvent();
+        order.orderId = mboDecoder.orderId();
+        order.isBid = mboDecoder.side() == Side.Bid;
+        order.shares = mboDecoder.size(); // uint32
+        order.limitPrice = mboDecoder.price();
+        order.entryTime = mboDecoder.timestampRecv();
+        order.eventTime = mboDecoder.timestampEvent();
 
         order.nextOrder = order.prevOrder = null;
         order.parentLimit = null;
@@ -98,9 +98,9 @@ public class MBOBook {
         return limit;
     }
 
-    private void insert(final MarketUpdateDecoder marketUpdateDecoder) {
-        final Order order = this.createOrder(marketUpdateDecoder);
-        Limit existingLimit = limitMap.get(marketUpdateDecoder.price());
+    private void insert(final MBODecoder mboDecoder) {
+        final Order order = this.createOrder(mboDecoder);
+        Limit existingLimit = limitMap.get(mboDecoder.price());
         if (existingLimit != null) {
             existingLimit.addOrder(order);
             return;
@@ -120,16 +120,16 @@ public class MBOBook {
         }
     }
 
-    private void cancel(final MarketUpdateDecoder marketUpdateDecoder, final boolean forceRemove) {
-        final Order order = this.orderMap.get(marketUpdateDecoder.orderId());
+    private void cancel(final MBODecoder mboDecoder, final boolean forceRemove) {
+        final Order order = this.orderMap.get(mboDecoder.orderId());
         if (order == null) {
             // TODO: Something better here?
             return;
         }
 
-        if (marketUpdateDecoder.size() < order.shares && !forceRemove) {
-            order.shares -= marketUpdateDecoder.size();
-            order.parentLimit.size -= marketUpdateDecoder.size();
+        if (mboDecoder.size() < order.shares && !forceRemove) {
+            order.shares -= mboDecoder.size();
+            order.parentLimit.size -= mboDecoder.size();
             return;
         }
 
@@ -153,20 +153,20 @@ public class MBOBook {
         this.orderPool.release(order.self);
     }
 
-    private void modify(final MarketUpdateDecoder marketUpdateDecoder) {
-        final Order order = this.orderMap.get(marketUpdateDecoder.orderId());
+    private void modify(final MBODecoder mboDecoder) {
+        final Order order = this.orderMap.get(mboDecoder.orderId());
         if (order == null) {
             // TODO: Something better here?
             return;
         }
 
-        if (order.limitPrice != marketUpdateDecoder.price()) {
-            cancel(marketUpdateDecoder, true);
-            insert(marketUpdateDecoder);
+        if (order.limitPrice != mboDecoder.price()) {
+            cancel(mboDecoder, true);
+            insert(mboDecoder);
             return;
         }
 
-        long sharesDiff = order.shares - marketUpdateDecoder.size();
+        long sharesDiff = order.shares - mboDecoder.size();
         if (sharesDiff < 0) {
             // Remove priority if order increases in size
             this.limitMap.get(order.limitPrice).sendToBack(order);

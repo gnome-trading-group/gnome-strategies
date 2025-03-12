@@ -37,23 +37,18 @@
     <dependencies>
         <dependency>
             <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-orchestrator</artifactId>
-            <version>1.0.1</version>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
             <artifactId>gnome-core</artifactId>
             <version>1.0.26</version>
         </dependency>
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-registry</artifactId>
-            <version>1.0.0</version>
+            <version>1.0.2</version>
         </dependency>
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-schemas</artifactId>
-            <version>1.0.1</version>
+            <version>1.0.2</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

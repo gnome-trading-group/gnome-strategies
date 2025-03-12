@@ -2,8 +2,6 @@ package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.ipc.IPCManager;
-import group.gnometrading.objects.MarketUpdateDecoder;
-import group.gnometrading.objects.MessageHeaderDecoder;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import io.aeron.Subscription;
@@ -37,10 +35,9 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
 
     private final Subscription subscription;
     private final S3Client s3Client;
-    private final MarketUpdateDecoder decoder;
-    private final MessageHeaderDecoder headerDecoder;
     private final Listing listing;
     private final String bucketName;
+    private final String identifier;
     private final SchemaType schemaType;
     private final ExpandableArrayBuffer purgatory;
 
@@ -54,25 +51,23 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
             S3Client s3Client,
             Listing listing,
             String bucketName,
+            String identifier,
             SchemaType schemaType
     ) {
         this.s3Client = s3Client;
         this.listing = listing;
         this.bucketName = bucketName;
+        this.identifier = identifier;
         this.schemaType = schemaType;
         this.subscription = ipcManager.addSubscription(streamName);
         this.purgatory = new ExpandableArrayBuffer(1 << 14);
-        this.decoder = new MarketUpdateDecoder();
-        this.headerDecoder = new MessageHeaderDecoder();
         this.currentHour = LocalDateTime.now(ZoneOffset.UTC);
         openNewFile();
     }
 
     @Override
     public void onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header) {
-        this.decoder.wrapAndApplyHeader(buffer, offset, this.headerDecoder);
         // TODO: Should we use the local clock time or the timestamp of the event? Does it matter?
-
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
             logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
@@ -107,8 +102,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
 
     private String buildKey(final String fileName) {
         String date = fileName.substring(0, fileName.lastIndexOf('.'));
-        String name = this.schemaType.getIdentifier();
-        return "%d/%d/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), date, name);
+        return "%d/%d/%s/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), date, this.schemaType.getIdentifier(), this.identifier);
     }
 
     private void uploadToS3(final String filePath) {

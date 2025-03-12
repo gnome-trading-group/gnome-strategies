@@ -1,6 +1,6 @@
 package group.gnometrading.books;
 
-import group.gnometrading.objects.*;
+import group.gnometrading.schemas.*;
 import org.agrona.ExpandableDirectByteBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,8 +15,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MBOBookTest {
 
-    private static final MarketUpdateDecoder marketUpdateDecoder = new MarketUpdateDecoder();
-    private static final MarketUpdateEncoder marketUpdateEncoder = new MarketUpdateEncoder();
+    private static final MBODecoder marketUpdateDecoder = new MBODecoder();
+    private static final MBOEncoder marketUpdateEncoder = new MBOEncoder();
     private static final MutableDirectBuffer buffer = new ExpandableDirectByteBuffer();
     private static MBOBook book;
 
@@ -319,7 +319,7 @@ class MBOBookTest {
         marketUpdateEncoder.orderId(orderId)
                 .price(price)
                 .size(size)
-                .side(side == 'A' ? Side.Sell : Side.Buy)
+                .side(side == 'A' ? Side.Ask : Side.Bid)
                 .action(action);
         book.apply(marketUpdateDecoder);
     }
