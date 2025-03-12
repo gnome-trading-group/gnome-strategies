@@ -60,7 +60,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
         this.identifier = identifier;
         this.schemaType = schemaType;
         this.subscription = ipcManager.addSubscription(streamName);
-        this.purgatory = new ExpandableArrayBuffer(1 << 14);
+        this.purgatory = new ExpandableArrayBuffer(1 << 16); // 64kb
         this.currentHour = LocalDateTime.now(ZoneOffset.UTC);
         openNewFile();
     }
