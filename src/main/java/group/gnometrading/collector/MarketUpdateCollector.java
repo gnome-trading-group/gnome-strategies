@@ -30,7 +30,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
 
     private static final int FRAGMENT_LIMIT = 1;
     private static final String OUTPUT_DIRECTORY = "./market-data/";
-    private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd_HH");
+    private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHH");
     private static final Logger logger = LoggerFactory.getLogger(MarketUpdateCollector.class);
 
     private final Subscription subscription;
