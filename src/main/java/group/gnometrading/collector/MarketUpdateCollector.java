@@ -141,6 +141,12 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
     }
 
     @Override
+    public void onClose() {
+        logger.info("Agent is exiting... attempting to cycle file.");
+        this.cycleFile();
+    }
+
+    @Override
     public String roleName() {
         return "collector";
     }
