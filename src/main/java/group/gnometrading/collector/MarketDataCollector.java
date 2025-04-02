@@ -26,12 +26,12 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 
-public class MarketUpdateCollector implements FragmentHandler, Agent {
+public class MarketDataCollector implements FragmentHandler, Agent {
 
     private static final int FRAGMENT_LIMIT = 1;
     private static final String OUTPUT_DIRECTORY = "./market-data/";
     private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHH");
-    private static final Logger logger = LoggerFactory.getLogger(MarketUpdateCollector.class);
+    private static final Logger logger = LoggerFactory.getLogger(MarketDataCollector.class);
 
     private final Subscription subscription;
     private final S3Client s3Client;
@@ -45,7 +45,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
     private LocalDateTime currentHour;
     private String currentFileName;
 
-    public MarketUpdateCollector(
+    public MarketDataCollector(
             IPCManager ipcManager,
             String streamName,
             S3Client s3Client,
@@ -76,6 +76,7 @@ public class MarketUpdateCollector implements FragmentHandler, Agent {
             openNewFile();
         }
 
+        logger.info("Writing bytes {}", length);
         try {
             buffer.getBytes(offset, this.purgatory, 0, length);
             currentFileStream.write(this.purgatory.byteArray(), 0, length);
