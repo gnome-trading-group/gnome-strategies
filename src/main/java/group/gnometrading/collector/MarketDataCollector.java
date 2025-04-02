@@ -1,15 +1,12 @@
 package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdOutputStream;
-import group.gnometrading.ipc.IPCManager;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
-import io.aeron.Subscription;
 import io.aeron.logbuffer.FragmentHandler;
 import io.aeron.logbuffer.Header;
 import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
-import org.agrona.concurrent.Agent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -21,19 +18,18 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 
-public class MarketDataCollector implements FragmentHandler, Agent {
+class MarketDataCollector implements FragmentHandler {
 
-    private static final int FRAGMENT_LIMIT = 1;
-    private static final String OUTPUT_DIRECTORY = "./market-data/";
+    private static final String OUTPUT_DIRECTORY = "market-data";
     private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHH");
     private static final Logger logger = LoggerFactory.getLogger(MarketDataCollector.class);
 
-    private final Subscription subscription;
+    private final Clock clock;
     private final S3Client s3Client;
     private final Listing listing;
     private final String bucketName;
@@ -46,29 +42,27 @@ public class MarketDataCollector implements FragmentHandler, Agent {
     private String currentFileName;
 
     public MarketDataCollector(
-            IPCManager ipcManager,
-            String streamName,
+            Clock clock,
             S3Client s3Client,
             Listing listing,
             String bucketName,
             String identifier,
             SchemaType schemaType
     ) {
+        this.clock = clock;
         this.s3Client = s3Client;
         this.listing = listing;
         this.bucketName = bucketName;
         this.identifier = identifier;
         this.schemaType = schemaType;
-        this.subscription = ipcManager.addSubscription(streamName);
         this.purgatory = new ExpandableArrayBuffer(1 << 16); // 64kb
-        this.currentHour = LocalDateTime.now(ZoneOffset.UTC);
+        this.currentHour = LocalDateTime.now(this.clock);
         openNewFile();
     }
 
     @Override
     public void onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header) {
-        // TODO: Should we use the local clock time or the timestamp of the event? Does it matter?
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime now = LocalDateTime.now(this.clock);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
             logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
             cycleFile();
@@ -76,7 +70,6 @@ public class MarketDataCollector implements FragmentHandler, Agent {
             openNewFile();
         }
 
-        logger.info("Writing bytes {}", length);
         try {
             buffer.getBytes(offset, this.purgatory, 0, length);
             currentFileStream.write(this.purgatory.byteArray(), 0, length);
@@ -86,13 +79,13 @@ public class MarketDataCollector implements FragmentHandler, Agent {
         }
     }
 
-    private void cycleFile() {
+    public void cycleFile() {
         try {
             if (currentFileStream != null) {
                 currentFileStream.close();
             }
 
-            uploadToS3(currentFileName);
+            uploadToS3();
             Files.deleteIfExists(Paths.get(currentFileName));
 
             logger.info("File uploaded to S3 and deleted locally: {}", currentFileName);
@@ -101,15 +94,14 @@ public class MarketDataCollector implements FragmentHandler, Agent {
         }
     }
 
-    private String buildKey(final String fileName) {
-        String date = fileName.substring(0, fileName.lastIndexOf('.'));
-        return "%d/%d/%s/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), date, this.schemaType.getIdentifier(), this.identifier);
+    private String buildKey() {
+        return "%d/%d/%s/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), currentHour.format(HOUR_FORMAT), this.schemaType.getIdentifier(), this.identifier);
     }
 
-    private void uploadToS3(final String filePath) {
+    private void uploadToS3() {
         try {
-            final File file = new File(filePath);
-            final String key = buildKey(file.getName());
+            final File file = new File(this.currentFileName);
+            final String key = buildKey();
 
             PutObjectRequest request = PutObjectRequest.builder()
                     .bucket(this.bucketName)
@@ -125,30 +117,17 @@ public class MarketDataCollector implements FragmentHandler, Agent {
     }
 
     private void openNewFile() {
-        currentFileName = OUTPUT_DIRECTORY + currentHour.format(HOUR_FORMAT) + ".zst";
+        currentFileName = "./%s/%s/%s.zst".formatted(OUTPUT_DIRECTORY, this.schemaType.getIdentifier(), currentHour.format(HOUR_FORMAT));
         logger.info("Opening new file: {}", currentFileName);
         try {
-            Files.createDirectories(Paths.get(OUTPUT_DIRECTORY));
+            File targetFile = new File(currentFileName);
+            File parent = targetFile.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                throw new IllegalStateException("Unable to create directory: " + parent);
+            }
             currentFileStream = new ZstdOutputStream(new FileOutputStream(currentFileName));
         } catch (IOException e) {
             throw new RuntimeException("Error while creating new file", e);
         }
-    }
-
-    @Override
-    public int doWork() throws Exception {
-        this.subscription.poll(this, FRAGMENT_LIMIT);
-        return 0; // TODO: Do we want to sleep on no fragments? Or return priority > 0?
-    }
-
-    @Override
-    public void onClose() {
-        logger.info("Agent is exiting... attempting to cycle file.");
-        this.cycleFile();
-    }
-
-    @Override
-    public String roleName() {
-        return "collector";
     }
 }
