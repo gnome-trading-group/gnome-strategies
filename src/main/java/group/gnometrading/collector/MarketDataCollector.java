@@ -33,7 +33,6 @@ class MarketDataCollector implements FragmentHandler {
     private final S3Client s3Client;
     private final Listing listing;
     private final String bucketName;
-    private final String identifier;
     private final SchemaType schemaType;
     private final ExpandableArrayBuffer purgatory;
 
@@ -46,14 +45,12 @@ class MarketDataCollector implements FragmentHandler {
             S3Client s3Client,
             Listing listing,
             String bucketName,
-            String identifier,
             SchemaType schemaType
     ) {
         this.clock = clock;
         this.s3Client = s3Client;
         this.listing = listing;
         this.bucketName = bucketName;
-        this.identifier = identifier;
         this.schemaType = schemaType;
         this.purgatory = new ExpandableArrayBuffer(1 << 16); // 64kb
         this.currentHour = LocalDateTime.now(this.clock);
@@ -95,7 +92,7 @@ class MarketDataCollector implements FragmentHandler {
     }
 
     private String buildKey() {
-        return "%d/%d/%s/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), currentHour.format(HOUR_FORMAT), this.schemaType.getIdentifier(), this.identifier);
+        return "%d/%d/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), currentHour.format(HOUR_FORMAT), this.schemaType.getIdentifier());
     }
 
     private void uploadToS3() {

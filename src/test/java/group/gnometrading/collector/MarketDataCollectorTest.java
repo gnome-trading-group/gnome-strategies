@@ -33,7 +33,6 @@ class MarketDataCollectorTest {
 
     private static final Listing LISTING = new Listing(532, 151, 499, "id", "id");
     private static final String OUTPUT_BUCKET = "outoutoutout";
-    private static final String IDENTIFIER = "hello, why are you reading this?";
     private static final SchemaType TYPE = SchemaType.MBO;
 
     @Mock
@@ -60,7 +59,7 @@ class MarketDataCollectorTest {
         }).when(s3Client).putObject(any(PutObjectRequest.class), any(Path.class));
 
         date(2025, 4, 1, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(clock, s3Client, LISTING, OUTPUT_BUCKET, IDENTIFIER, TYPE);
+        MarketDataCollector collector = new MarketDataCollector(clock, s3Client, LISTING, OUTPUT_BUCKET, TYPE);
 
         date(2025, 4, 1, 1, 0);
         collector.onFragment(buf("1234"), 0, 4, null);
@@ -77,17 +76,17 @@ class MarketDataCollectorTest {
 
         var allRequests = reqCaptor.getAllValues();
 
-        assertEquals("151/499/2025040100/mbo/%s.zst".formatted(IDENTIFIER), allRequests.get(0).key());
+        assertEquals("151/499/2025040100/mbo.zst", allRequests.get(0).key());
         assertEquals(OUTPUT_BUCKET, allRequests.get(0).bucket());
         assertEquals("", uploads.get(0));
 
-        assertEquals("151/499/2025040101/mbo/%s.zst".formatted(IDENTIFIER), allRequests.get(1).key());
+        assertEquals("151/499/2025040101/mbo.zst", allRequests.get(1).key());
         assertEquals("1234", uploads.get(1));
 
-        assertEquals("151/499/2025040102/mbo/%s.zst".formatted(IDENTIFIER), allRequests.get(2).key());
+        assertEquals("151/499/2025040102/mbo.zst", allRequests.get(2).key());
         assertEquals("321hey man", uploads.get(2));
 
-        assertEquals("151/499/2025040305/mbo/%s.zst".formatted(IDENTIFIER), allRequests.get(3).key());
+        assertEquals("151/499/2025040305/mbo.zst", allRequests.get(3).key());
         assertEquals("oh no a day", uploads.get(3));
     }
 

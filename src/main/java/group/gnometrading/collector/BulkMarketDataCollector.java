@@ -37,7 +37,6 @@ public class BulkMarketDataCollector implements FragmentHandler, Agent {
             S3Client s3Client,
             Listing listing,
             String bucketName,
-            String identifier,
             SchemaType originalType
     ) {
         this.subscription = ipcManager.addSubscription(streamName);
@@ -47,9 +46,9 @@ public class BulkMarketDataCollector implements FragmentHandler, Agent {
         this.converters = new HashMap<>();
         for (SchemaType other : SchemaType.values()) {
             if (other == this.originalType) {
-                this.collectors.put(other, new MarketDataCollector(clock, s3Client, listing, bucketName, identifier, other));
+                this.collectors.put(other, new MarketDataCollector(clock, s3Client, listing, bucketName, other));
             } else if (SchemaConversionRegistry.hasConverter(originalType, other)) {
-                this.collectors.put(other, new MarketDataCollector(clock, s3Client, listing, bucketName, identifier, other));
+                this.collectors.put(other, new MarketDataCollector(clock, s3Client, listing, bucketName, other));
                 this.converters.put(other, (SchemaConverter<Schema<?, ?>, Schema<?, ?>>) SchemaConversionRegistry.getConverter(this.originalType, other));
             }
         }
