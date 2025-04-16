@@ -114,7 +114,7 @@ class MarketDataCollector implements FragmentHandler {
     }
 
     private void openNewFile() {
-        currentFileName = "./%s/%s/%s.zst".formatted(OUTPUT_DIRECTORY, this.schemaType.getIdentifier(), currentHour.format(HOUR_FORMAT));
+        currentFileName = "./%s/%d/%s/%s.zst".formatted(OUTPUT_DIRECTORY, this.listing.listingId(), this.schemaType.getIdentifier(), currentHour.format(HOUR_FORMAT));
         logger.info("Opening new file: {}", currentFileName);
         try {
             File targetFile = new File(currentFileName);
