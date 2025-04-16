@@ -1,6 +1,5 @@
 package group.gnometrading.collector;
 
-import group.gnometrading.ipc.IPCManager;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.schemas.converters.SchemaConversionRegistry;
@@ -31,15 +30,14 @@ public class BulkMarketDataCollector implements FragmentHandler, Agent {
 
     @SuppressWarnings("unchecked")
     public BulkMarketDataCollector(
+            Subscription subscription,
             Clock clock,
-            IPCManager ipcManager,
-            String streamName,
             S3Client s3Client,
             Listing listing,
             String bucketName,
             SchemaType originalType
     ) {
-        this.subscription = ipcManager.addSubscription(streamName);
+        this.subscription = subscription;
         this.originalType = originalType;
 
         this.collectors = new HashMap<>();
