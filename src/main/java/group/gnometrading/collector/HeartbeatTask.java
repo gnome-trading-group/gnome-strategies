@@ -11,7 +11,7 @@ import java.io.IOException;
 public class HeartbeatTask implements Agent {
 
     private static final String API_KEY_HEADER = "x-api-key";
-    private static final String HEARTBEAT_PATH = "/collectors/heartbeat";
+    private static final String HEARTBEAT_PATH = "/api/collectors/heartbeat";
 
     private final String controllerUrl;
     private final String controllerApiKey;
