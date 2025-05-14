@@ -76,17 +76,17 @@ class MarketDataCollectorTest {
 
         var allRequests = reqCaptor.getAllValues();
 
-        assertEquals("151/499/2025040100/mbo.zst", allRequests.get(0).key());
+        assertEquals("499/151/2025040100/mbo.zst", allRequests.get(0).key());
         assertEquals(OUTPUT_BUCKET, allRequests.get(0).bucket());
         assertEquals("", uploads.get(0));
 
-        assertEquals("151/499/2025040101/mbo.zst", allRequests.get(1).key());
+        assertEquals("499/151/2025040101/mbo.zst", allRequests.get(1).key());
         assertEquals("1234", uploads.get(1));
 
-        assertEquals("151/499/2025040102/mbo.zst", allRequests.get(2).key());
+        assertEquals("499/151/2025040102/mbo.zst", allRequests.get(2).key());
         assertEquals("321hey man", uploads.get(2));
 
-        assertEquals("151/499/2025040305/mbo.zst", allRequests.get(3).key());
+        assertEquals("499/151/2025040305/mbo.zst", allRequests.get(3).key());
         assertEquals("oh no a day", uploads.get(3));
     }
 

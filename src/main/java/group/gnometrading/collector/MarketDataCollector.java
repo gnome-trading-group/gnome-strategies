@@ -92,7 +92,7 @@ class MarketDataCollector implements FragmentHandler {
     }
 
     private String buildKey() {
-        return "%d/%d/%s/%s.zst".formatted(listing.exchangeId(), listing.securityId(), currentHour.format(HOUR_FORMAT), this.schemaType.getIdentifier());
+        return "%d/%d/%s/%s.zst".formatted(listing.securityId(), listing.exchangeId(), currentHour.format(HOUR_FORMAT), this.schemaType.getIdentifier());
     }
 
     private void uploadToS3() {

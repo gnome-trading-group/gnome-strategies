@@ -176,7 +176,7 @@ public class MarketDataAggregator {
 
         cloudWatchClient.putMetricData(
                 request -> request
-                        .namespace(MarketDataUtils.NAMESPACE)
+                        .namespace(MarketDataUtils.CLOUDWATCH_NAMESPACE)
                         .metricData(metrics)
         );
     }
