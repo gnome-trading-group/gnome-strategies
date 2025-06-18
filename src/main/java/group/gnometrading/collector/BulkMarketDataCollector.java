@@ -71,7 +71,7 @@ public class BulkMarketDataCollector implements FragmentHandler, Agent {
     @Override
     public int doWork() throws Exception {
         this.subscription.poll(this, FRAGMENT_LIMIT);
-        return 0; // TODO: Do we want to sleep on no fragments? Or return priority > 0?
+        return 0;
     }
 
     @Override
@@ -80,6 +80,7 @@ public class BulkMarketDataCollector implements FragmentHandler, Agent {
         for (MarketDataCollector collector : this.collectors.values()) {
             collector.cycleFile();
         }
+        this.subscription.close();
     }
 
     @Override
