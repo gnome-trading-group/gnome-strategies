@@ -1,15 +1,12 @@
 package group.gnometrading.collector;
 
+import com.lmax.disruptor.EventHandler;
+import group.gnometrading.disruptor.SBEWrapper;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.schemas.converters.SchemaConversionRegistry;
 import group.gnometrading.schemas.converters.SchemaConverter;
 import group.gnometrading.sm.Listing;
-import io.aeron.Subscription;
-import io.aeron.logbuffer.FragmentHandler;
-import io.aeron.logbuffer.Header;
-import org.agrona.DirectBuffer;
-import org.agrona.concurrent.Agent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -18,28 +15,23 @@ import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 
-public class BulkMarketDataCollector implements FragmentHandler, Agent {
+public class BulkMarketDataCollector implements EventHandler<SBEWrapper> {
 
-    private static final int FRAGMENT_LIMIT = 1;
     private static final Logger logger = LoggerFactory.getLogger(BulkMarketDataCollector.class);
 
-    private final Subscription subscription;
     private final Map<SchemaType, MarketDataCollector> collectors;
     private final Map<SchemaType, SchemaConverter<Schema<?, ?>, Schema<?, ?>>> converters;
     private final SchemaType originalType;
 
     @SuppressWarnings("unchecked")
     public BulkMarketDataCollector(
-            Subscription subscription,
             Clock clock,
             S3Client s3Client,
             Listing listing,
             String bucketName,
             SchemaType originalType
     ) {
-        this.subscription = subscription;
         this.originalType = originalType;
-
         this.collectors = new HashMap<>();
         this.converters = new HashMap<>();
         for (SchemaType other : SchemaType.values()) {
@@ -53,38 +45,26 @@ public class BulkMarketDataCollector implements FragmentHandler, Agent {
     }
 
     @Override
-    public void onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header) {
+    public void onEvent(SBEWrapper sbeWrapper, long sequence, boolean endOfBatch) throws Exception {
         for (var item : this.collectors.entrySet()) {
             if (item.getKey() == this.originalType) {
-                item.getValue().onFragment(buffer, offset, length, header);
+                item.getValue().onEvent(sbeWrapper.buffer, sbeWrapper.offset, sbeWrapper.length);
             } else {
-                assert length == this.originalType.getInstance().totalMessageSize() : "Invalid length";
-                this.originalType.getInstance().buffer.putBytes(0, buffer, offset, length);
+                assert sbeWrapper.length == this.originalType.getInstance().totalMessageSize() : "Invalid length";
+                this.originalType.getInstance().buffer.putBytes(0, sbeWrapper.buffer, sbeWrapper.offset, sbeWrapper.length);
                 Schema<?, ?> conversion = this.converters.get(item.getKey()).convert(this.originalType.getInstance());
                 if (conversion != null) {
-                    item.getValue().onFragment(conversion.buffer, 0, conversion.totalMessageSize(), null);
+                    item.getValue().onEvent(conversion.buffer, 0, conversion.totalMessageSize());
                 }
             }
         }
     }
 
     @Override
-    public int doWork() throws Exception {
-        this.subscription.poll(this, FRAGMENT_LIMIT);
-        return 0;
-    }
-
-    @Override
-    public void onClose() {
-        logger.info("Agent is exiting... attempting to cycle files.");
+    public void onShutdown() {
+        logger.info("Market data collector is exiting... attempting to cycle files.");
         for (MarketDataCollector collector : this.collectors.values()) {
             collector.cycleFile();
         }
-        this.subscription.close();
-    }
-
-    @Override
-    public String roleName() {
-        return "collector";
     }
 }

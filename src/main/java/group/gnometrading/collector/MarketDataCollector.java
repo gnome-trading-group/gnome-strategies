@@ -3,10 +3,8 @@ package group.gnometrading.collector;
 import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
-import io.aeron.logbuffer.FragmentHandler;
-import io.aeron.logbuffer.Header;
-import org.agrona.DirectBuffer;
 import org.agrona.ExpandableArrayBuffer;
+import org.agrona.MutableDirectBuffer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -23,7 +21,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 
-class MarketDataCollector implements FragmentHandler {
+class MarketDataCollector {
 
     private static final String OUTPUT_DIRECTORY = "market-data";
     private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHH");
@@ -57,8 +55,7 @@ class MarketDataCollector implements FragmentHandler {
         openNewFile();
     }
 
-    @Override
-    public void onFragment(final DirectBuffer buffer, final int offset, final int length, final Header header) {
+    public void onEvent(final MutableDirectBuffer buffer, int offset, int length) throws Exception {
         LocalDateTime now = LocalDateTime.now(this.clock);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
             logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));

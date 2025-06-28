@@ -4,6 +4,7 @@ import com.github.luben.zstd.ZstdInputStream;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import org.agrona.DirectBuffer;
+import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +48,7 @@ class MarketDataCollectorTest {
     }
 
     @Test
-    void testBasicCollector() {
+    void testBasicCollector() throws Exception {
         ArgumentCaptor<PutObjectRequest> reqCaptor = ArgumentCaptor.forClass(PutObjectRequest.class);
         ArgumentCaptor<Path> pathCaptor = ArgumentCaptor.forClass(Path.class);
         List<String> uploads = new ArrayList<>();
@@ -62,15 +63,15 @@ class MarketDataCollectorTest {
         MarketDataCollector collector = new MarketDataCollector(clock, s3Client, LISTING, OUTPUT_BUCKET, TYPE);
 
         date(2025, 4, 1, 1, 0);
-        collector.onFragment(buf("1234"), 0, 4, null);
+        collector.onEvent(buf("1234"), 0, 4);
         date(2025, 4, 1, 2, 0);
-        collector.onFragment(buf("4321"), 1, 3, null);
+        collector.onEvent(buf("4321"), 1, 3);
         date(2025, 4, 1, 2, 30);
-        collector.onFragment(buf("hey man"), 0, 7, null);
+        collector.onEvent(buf("hey man"), 0, 7);
         date(2025, 4, 3, 5, 30);
-        collector.onFragment(buf("oh no a day"), 0, 11, null);
+        collector.onEvent(buf("oh no a day"), 0, 11);
         date(2026, 4, 3, 5, 30);
-        collector.onFragment(buf("oh no a year"), 0, 11, null);
+        collector.onEvent(buf("oh no a year"), 0, 11);
 
         verify(s3Client, times(4)).putObject(reqCaptor.capture(), pathCaptor.capture());
 
@@ -90,7 +91,7 @@ class MarketDataCollectorTest {
         assertEquals("oh no a day", uploads.get(3));
     }
 
-    private DirectBuffer buf(String input) {
+    private MutableDirectBuffer buf(String input) {
         return new UnsafeBuffer(input.getBytes());
     }
 
