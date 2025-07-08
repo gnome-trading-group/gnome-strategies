@@ -1,10 +1,10 @@
 package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdOutputStream;
+import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import org.agrona.ExpandableArrayBuffer;
-import org.agrona.MutableDirectBuffer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -55,7 +55,7 @@ class MarketDataCollector {
         openNewFile();
     }
 
-    public void onEvent(final MutableDirectBuffer buffer, int offset, int length) throws Exception {
+    public void onEvent(final Schema<?, ?> schema) throws Exception {
         LocalDateTime now = LocalDateTime.now(this.clock);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
             logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
@@ -65,8 +65,8 @@ class MarketDataCollector {
         }
 
         try {
-            buffer.getBytes(offset, this.purgatory, 0, length);
-            currentFileStream.write(this.purgatory.byteArray(), 0, length);
+            schema.buffer.getBytes(0, this.purgatory, 0, schema.totalMessageSize());
+            currentFileStream.write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
         } catch (IOException e) {
             logger.error("Error trying to write to file stream", e);
             throw new RuntimeException(e);

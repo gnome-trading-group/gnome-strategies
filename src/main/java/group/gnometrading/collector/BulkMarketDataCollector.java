@@ -1,7 +1,6 @@
 package group.gnometrading.collector;
 
 import com.lmax.disruptor.EventHandler;
-import group.gnometrading.disruptor.SBEWrapper;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.schemas.converters.SchemaConversionRegistry;
@@ -15,7 +14,7 @@ import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 
-public class BulkMarketDataCollector implements EventHandler<SBEWrapper> {
+public class BulkMarketDataCollector implements EventHandler<Schema<?, ?>> {
 
     private static final Logger logger = LoggerFactory.getLogger(BulkMarketDataCollector.class);
 
@@ -45,16 +44,14 @@ public class BulkMarketDataCollector implements EventHandler<SBEWrapper> {
     }
 
     @Override
-    public void onEvent(SBEWrapper sbeWrapper, long sequence, boolean endOfBatch) throws Exception {
+    public void onEvent(Schema<?, ?> schema, long sequence, boolean endOfBatch) throws Exception {
         for (var item : this.collectors.entrySet()) {
             if (item.getKey() == this.originalType) {
-                item.getValue().onEvent(sbeWrapper.buffer, sbeWrapper.offset, sbeWrapper.length);
+                item.getValue().onEvent(schema);
             } else {
-                assert sbeWrapper.length == this.originalType.getInstance().totalMessageSize() : "Invalid length";
-                this.originalType.getInstance().buffer.putBytes(0, sbeWrapper.buffer, sbeWrapper.offset, sbeWrapper.length);
-                Schema<?, ?> conversion = this.converters.get(item.getKey()).convert(this.originalType.getInstance());
+                Schema<?, ?> conversion = this.converters.get(item.getKey()).convert(schema);
                 if (conversion != null) {
-                    item.getValue().onEvent(conversion.buffer, 0, conversion.totalMessageSize());
+                    item.getValue().onEvent(conversion);
                 }
             }
         }

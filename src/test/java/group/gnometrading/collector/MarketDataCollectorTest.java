@@ -1,11 +1,10 @@
 package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdInputStream;
+import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
-import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
-import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,7 +54,7 @@ class MarketDataCollectorTest {
 
         doAnswer((Answer<Void>) invocation -> {
             Path path = invocation.getArgument(1);
-            uploads.add(parseZstd(path));
+            uploads.add(parseZstd(path).trim());
             return null;
         }).when(s3Client).putObject(any(PutObjectRequest.class), any(Path.class));
 
@@ -63,15 +62,15 @@ class MarketDataCollectorTest {
         MarketDataCollector collector = new MarketDataCollector(clock, s3Client, LISTING, OUTPUT_BUCKET, TYPE);
 
         date(2025, 4, 1, 1, 0);
-        collector.onEvent(buf("1234"), 0, 4);
+        collector.onEvent(buf("aaaaaaaa"));
         date(2025, 4, 1, 2, 0);
-        collector.onEvent(buf("4321"), 1, 3);
+        collector.onEvent(buf("bbbbbbbb"));
         date(2025, 4, 1, 2, 30);
-        collector.onEvent(buf("hey man"), 0, 7);
+        collector.onEvent(buf("cccccccc"));
         date(2025, 4, 3, 5, 30);
-        collector.onEvent(buf("oh no a day"), 0, 11);
+        collector.onEvent(buf("dddddddd"));
         date(2026, 4, 3, 5, 30);
-        collector.onEvent(buf("oh no a year"), 0, 11);
+        collector.onEvent(buf("eeeeeeee"));
 
         verify(s3Client, times(4)).putObject(reqCaptor.capture(), pathCaptor.capture());
 
@@ -82,17 +81,17 @@ class MarketDataCollectorTest {
         assertEquals("", uploads.get(0));
 
         assertEquals("499/151/2025040101/mbo.zst", allRequests.get(1).key());
-        assertEquals("1234", uploads.get(1));
+        assertEquals("aaaaaaaa", uploads.get(1));
 
         assertEquals("499/151/2025040102/mbo.zst", allRequests.get(2).key());
-        assertEquals("321hey man", uploads.get(2));
+        assertEquals("bbbbbbbbcccccccc", uploads.get(2));
 
         assertEquals("499/151/2025040305/mbo.zst", allRequests.get(3).key());
-        assertEquals("oh no a day", uploads.get(3));
+        assertEquals("dddddddd", uploads.get(3));
     }
 
-    private MutableDirectBuffer buf(String input) {
-        return new UnsafeBuffer(input.getBytes());
+    private Schema<?, ?> buf(String input) {
+        return new DummySchema(input);
     }
 
     private String parseZstd(Path path) {
@@ -105,6 +104,28 @@ class MarketDataCollectorTest {
 
     private void date(int year, int month, int day, int hour, int minute) {
         when(clock.instant()).thenReturn(LocalDateTime.of(year, month, day, hour, minute).toInstant(UTC));
+    }
+
+    private static class DummySchema extends Schema<Object, Object> {
+
+        public DummySchema(String input) {
+            super(SchemaType.MBP_10, 0, 0);
+
+            this.buffer.putBytes(0, input.getBytes()); // Buffer is size 8 from header padding
+        }
+
+        @Override
+        protected int getEncodedBlockLength() {
+            return 0;
+        }
+
+        @Override
+        public void wrap(MutableDirectBuffer mutableDirectBuffer) {}
+
+        @Override
+        public long getEventTimestamp() {
+            return 0;
+        }
     }
 
 }
