@@ -55,7 +55,7 @@ class MarketDataCollector {
         openNewFile();
     }
 
-    public void onEvent(final Schema<?, ?> schema) throws Exception {
+    public void onEvent(final Schema schema) throws Exception {
         LocalDateTime now = LocalDateTime.now(this.clock);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
             logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));

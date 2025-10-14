@@ -92,7 +92,7 @@ public class MarketDataAggregator {
     }
 
     private void aggregateKeys(MarketDataKey marketDataKey, Set<String> keys) {
-        Schema<?, ?> schema = SchemaType.findById(marketDataKey.schemaType).getInstance();
+        Schema schema = SchemaType.findById(marketDataKey.schemaType).getInstance();
         TreeMap<Long, Map<ByteBuffer, Integer>> recordCounts = new TreeMap<>();
         int totalRecords = 0;
 
@@ -102,7 +102,7 @@ public class MarketDataAggregator {
             for (ByteBuffer record : records) {
                 schema.wrap(new UnsafeBuffer(record));
                 // Enforce insertion order on the same timestamp in which the exchange sent it to us (ie, use a LinkedHashMap)
-                var map = recordCounts.computeIfAbsent(schema.getEventTimestamp(), ignore -> new LinkedHashMap<>());
+                var map = recordCounts.computeIfAbsent(schema.getSequenceNumber(), ignore -> new LinkedHashMap<>());
                 map.put(record, map.getOrDefault(record, 0) + 1);
             }
         }

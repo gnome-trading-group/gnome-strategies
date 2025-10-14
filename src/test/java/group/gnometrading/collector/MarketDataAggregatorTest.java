@@ -307,18 +307,18 @@ class MarketDataAggregatorTest {
             byte[] item = new byte[msgSize];
             new Random(seeds[i]).nextBytes(item);
             schemaType.getInstance().buffer.putBytes(0, item);
-            setTimestamp(time, schemaType.getInstance());
+            setSequence(time, schemaType.getInstance());
             schemaType.getInstance().wrap(schemaType.getInstance().buffer); // Re-apply the header
             schemaType.getInstance().buffer.getBytes(0, output, i * msgSize, msgSize);
         }
         return new S3Data("%d/%d/%s/%s/id-%d.zst".formatted(exchangeId, securityId, timestamp, schemaType.getIdentifier(), id), ByteBuffer.wrap(output));
     }
 
-    private static void setTimestamp(long time, Schema<?, ?> schema) {
+    private static void setSequence(long time, Schema schema) {
         if (schema instanceof MBP10Schema) {
-            ((MBP10Schema) schema).encoder.timestampEvent(time);
+            ((MBP10Schema) schema).encoder.sequence(time);
         } else if (schema instanceof MBP1Schema) {
-            ((MBP1Schema) schema).encoder.timestampEvent(time);
+            ((MBP1Schema) schema).encoder.sequence(time);
         } else {
             throw new IllegalArgumentException("Add more if statements you lazy man.");
         }

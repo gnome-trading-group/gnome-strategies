@@ -14,12 +14,12 @@ import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 
-public class BulkMarketDataCollector implements EventHandler<Schema<?, ?>> {
+public class BulkMarketDataCollector implements EventHandler<Schema> {
 
     private static final Logger logger = LoggerFactory.getLogger(BulkMarketDataCollector.class);
 
     private final Map<SchemaType, MarketDataCollector> collectors;
-    private final Map<SchemaType, SchemaConverter<Schema<?, ?>, Schema<?, ?>>> converters;
+    private final Map<SchemaType, SchemaConverter<Schema, Schema>> converters;
     private final SchemaType originalType;
 
     @SuppressWarnings("unchecked")
@@ -38,18 +38,18 @@ public class BulkMarketDataCollector implements EventHandler<Schema<?, ?>> {
                 this.collectors.put(other, new MarketDataCollector(clock, s3Client, listing, bucketName, other));
             } else if (SchemaConversionRegistry.hasConverter(originalType, other)) {
                 this.collectors.put(other, new MarketDataCollector(clock, s3Client, listing, bucketName, other));
-                this.converters.put(other, (SchemaConverter<Schema<?, ?>, Schema<?, ?>>) SchemaConversionRegistry.getConverter(this.originalType, other));
+                this.converters.put(other, (SchemaConverter<Schema, Schema>) SchemaConversionRegistry.getConverter(this.originalType, other));
             }
         }
     }
 
     @Override
-    public void onEvent(Schema<?, ?> schema, long sequence, boolean endOfBatch) throws Exception {
+    public void onEvent(Schema schema, long sequence, boolean endOfBatch) throws Exception {
         for (var item : this.collectors.entrySet()) {
             if (item.getKey() == this.originalType) {
                 item.getValue().onEvent(schema);
             } else {
-                Schema<?, ?> conversion = this.converters.get(item.getKey()).convert(schema);
+                Schema conversion = this.converters.get(item.getKey()).convert(schema);
                 if (conversion != null) {
                     item.getValue().onEvent(conversion);
                 }

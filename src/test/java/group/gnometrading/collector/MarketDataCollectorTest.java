@@ -90,7 +90,7 @@ class MarketDataCollectorTest {
         assertEquals("dddddddd", uploads.get(3));
     }
 
-    private Schema<?, ?> buf(String input) {
+    private Schema buf(String input) {
         return new DummySchema(input);
     }
 
@@ -106,10 +106,10 @@ class MarketDataCollectorTest {
         when(clock.instant()).thenReturn(LocalDateTime.of(year, month, day, hour, minute).toInstant(UTC));
     }
 
-    private static class DummySchema extends Schema<Object, Object> {
+    private static class DummySchema extends Schema {
 
         public DummySchema(String input) {
-            super(SchemaType.MBP_10, 0, 0);
+            super(SchemaType.MBP_10);
 
             this.buffer.putBytes(0, input.getBytes()); // Buffer is size 8 from header padding
         }
@@ -123,7 +123,7 @@ class MarketDataCollectorTest {
         public void wrap(MutableDirectBuffer mutableDirectBuffer) {}
 
         @Override
-        public long getEventTimestamp() {
+        public long getSequenceNumber() {
             return 0;
         }
     }
