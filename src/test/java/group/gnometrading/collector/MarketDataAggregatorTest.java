@@ -2,6 +2,7 @@ package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdInputStream;
 import com.github.luben.zstd.ZstdOutputStream;
+import group.gnometrading.logging.NullLogger;
 import group.gnometrading.schemas.MBP10Schema;
 import group.gnometrading.schemas.MBP1Schema;
 import group.gnometrading.schemas.Schema;
@@ -57,7 +58,7 @@ class MarketDataAggregatorTest {
 
     @BeforeEach
     void setup() {
-        this.aggregator = new MarketDataAggregator(s3Client, cloudWatchClient, INPUT, OUTPUT);
+        this.aggregator = new MarketDataAggregator(new NullLogger(), s3Client, cloudWatchClient, INPUT, OUTPUT);
     }
 
     private static Stream<Arguments> testMarketDataAggregatorArgs() {

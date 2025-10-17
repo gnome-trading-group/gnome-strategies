@@ -2,11 +2,11 @@ package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdInputStream;
 import com.github.luben.zstd.ZstdOutputStream;
+import group.gnometrading.logging.LogMessage;
+import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
 import software.amazon.awssdk.services.cloudwatch.model.Dimension;
@@ -31,22 +31,24 @@ import java.util.stream.Collectors;
  */
 public class MarketDataAggregator {
 
-    private static final Logger logger = LoggerFactory.getLogger(MarketDataAggregator.class);
     private static final Pattern FILE_PATTERN = Pattern.compile(
             "^(\\d+)/(\\d+)/(\\d{10})/([^/]+)/([^/]+)\\.zst$"
     );
 
+    private final Logger logger;
     private final S3Client s3Client;
     private final CloudWatchClient cloudWatchClient;
     private final String inputBucket;
     private final String outputBucket;
 
     public MarketDataAggregator(
+            Logger logger,
             S3Client s3Client,
             CloudWatchClient cloudWatchClient,
             String inputBucket,
             String outputBucket
     ) {
+        this.logger = logger;
         this.s3Client = s3Client;
         this.cloudWatchClient = cloudWatchClient;
         this.inputBucket = inputBucket;
@@ -56,12 +58,12 @@ public class MarketDataAggregator {
     public void runAggregator() {
         Map<MarketDataKey, Set<String>> input = collectRawFiles();
         if (input.isEmpty()) {
-            logger.info("No new S3 files produced to run aggregation on");
+            logger.logf(LogMessage.DEBUG, "No new S3 files produced to run aggregation on");
             return;
         }
 
         for (var item : input.entrySet()) {
-            logger.info("Running key {} with {} entries", item.getKey().toString(), item.getValue().size());
+            logger.logf(LogMessage.DEBUG, "Running key %s with %s entries", item.getKey().toString(), item.getValue().size());
             aggregateKeys(item.getKey(), item.getValue());
         }
 
@@ -72,7 +74,7 @@ public class MarketDataAggregator {
     }
 
     private void cleanUpKeys(Set<String> keys) {
-        logger.info("Deleting {} keys", keys.size());
+        logger.logf(LogMessage.DEBUG, "Deleting %s keys", keys.size());
         List<ObjectIdentifier> objectsToDelete = keys.stream()
                 .map(key -> ObjectIdentifier.builder().key(key).build())
                 .toList();
@@ -83,11 +85,11 @@ public class MarketDataAggregator {
         );
         if (response.hasErrors()) {
             for (S3Error error : response.errors()) {
-                logger.error("Error deleting key {}: {}", error.key(), error.message());
+                logger.logf(LogMessage.UNKNOWN_ERROR, "Error deleting key %s: %s", error.key(), error.message());
             }
             throw new RuntimeException("Error while deleting keys. Please check the logs");
         } else {
-            logger.info("Successfully deleted keys");
+            logger.logf(LogMessage.DEBUG, "Successfully deleted keys");
         }
     }
 
@@ -115,10 +117,10 @@ public class MarketDataAggregator {
         try {
             writeAggregatedKey(marketDataKey, outputEntries);
         } catch (IOException e) {
-            logger.error("Error trying to write aggregated key: ", e);
+            logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write aggregated key: %s", e.getMessage());
             throw new RuntimeException(e);
         }
-        logger.info("Total: {} | Missing: {} | Duplicates: {}", totalRecords, missingRecords, duplicateRecords);
+        logger.logf(LogMessage.DEBUG, "Total: %d | Missing: %d | Duplicates: %d", totalRecords, missingRecords, duplicateRecords);
         pushMetricsToCloudWatch(marketDataKey, totalRecords, uniqueRecords, missingRecords, duplicateRecords);
     }
 

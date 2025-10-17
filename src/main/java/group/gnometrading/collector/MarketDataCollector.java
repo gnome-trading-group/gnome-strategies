@@ -1,12 +1,12 @@
 package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdOutputStream;
+import group.gnometrading.logging.LogMessage;
+import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import org.agrona.ExpandableArrayBuffer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -25,8 +25,8 @@ class MarketDataCollector {
 
     private static final String OUTPUT_DIRECTORY = "market-data";
     private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHH");
-    private static final Logger logger = LoggerFactory.getLogger(MarketDataCollector.class);
 
+    private final Logger logger;
     private final Clock clock;
     private final S3Client s3Client;
     private final Listing listing;
@@ -39,12 +39,14 @@ class MarketDataCollector {
     private String currentFileName;
 
     public MarketDataCollector(
+            Logger logger,
             Clock clock,
             S3Client s3Client,
             Listing listing,
             String bucketName,
             SchemaType schemaType
     ) {
+        this.logger = logger;
         this.clock = clock;
         this.s3Client = s3Client;
         this.listing = listing;
@@ -58,7 +60,7 @@ class MarketDataCollector {
     public void onEvent(final Schema schema) throws Exception {
         LocalDateTime now = LocalDateTime.now(this.clock);
         if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
-            logger.info("Switching hour to {} from {}", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
+            logger.logf(LogMessage.DEBUG, "Switching hour to %s from %s", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
             cycleFile();
             currentHour = now;
             openNewFile();
@@ -68,7 +70,7 @@ class MarketDataCollector {
             schema.buffer.getBytes(0, this.purgatory, 0, schema.totalMessageSize());
             currentFileStream.write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
         } catch (IOException e) {
-            logger.error("Error trying to write to file stream", e);
+            logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write to file stream: %s", e.getMessage());
             throw new RuntimeException(e);
         }
     }
@@ -82,7 +84,7 @@ class MarketDataCollector {
             uploadToS3();
             Files.deleteIfExists(Paths.get(currentFileName));
 
-            logger.info("File uploaded to S3 and deleted locally: {}", currentFileName);
+            logger.logf(LogMessage.DEBUG, "File uploaded to S3 and deleted locally: %s", currentFileName);
         } catch (IOException e) {
             throw new RuntimeException("Error cycling file", e);
         }
@@ -103,7 +105,7 @@ class MarketDataCollector {
                     .build();
 
             s3Client.putObject(request, file.toPath());
-            logger.info("Uploaded file to S3: {}", key);
+            logger.logf(LogMessage.DEBUG, "Uploaded file to S3: %s", key);
 
         } catch (S3Exception e) {
             throw new RuntimeException("Failed to upload file to S3: " + e.getMessage(), e);
@@ -112,7 +114,7 @@ class MarketDataCollector {
 
     private void openNewFile() {
         currentFileName = "./%s/%d/%s/%s.zst".formatted(OUTPUT_DIRECTORY, this.listing.listingId(), this.schemaType.getIdentifier(), currentHour.format(HOUR_FORMAT));
-        logger.info("Opening new file: {}", currentFileName);
+        logger.logf(LogMessage.DEBUG, "Opening new file: %s", currentFileName);
         try {
             File targetFile = new File(currentFileName);
             File parent = targetFile.getParentFile();

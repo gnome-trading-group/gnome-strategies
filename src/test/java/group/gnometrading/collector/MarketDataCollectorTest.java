@@ -1,6 +1,7 @@
 package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdInputStream;
+import group.gnometrading.logging.NullLogger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
@@ -59,7 +60,7 @@ class MarketDataCollectorTest {
         }).when(s3Client).putObject(any(PutObjectRequest.class), any(Path.class));
 
         date(2025, 4, 1, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(clock, s3Client, LISTING, OUTPUT_BUCKET, TYPE);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, TYPE);
 
         date(2025, 4, 1, 1, 0);
         collector.onEvent(buf("aaaaaaaa"));
