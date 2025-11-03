@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 public class MarketDataAggregator {
 
     private static final Pattern FILE_PATTERN = Pattern.compile(
-            "^(\\d+)/(\\d+)/(\\d{10})/([^/]+)/([^/]+)\\.zst$"
+            "^(\\d+)/(\\d+)/(\\d{12})/([^/]+)/([^/]+)\\.zst$"
     );
 
     private final Logger logger;
@@ -144,8 +144,8 @@ public class MarketDataAggregator {
 
     private void pushMetricsToCloudWatch(MarketDataKey key, int total, long unique, long missing, long duplicate) {
         var dimensions = new Dimension[] {
-                Dimension.builder().name("Exchange").value(String.valueOf(key.exchangeId)).build(),
-                Dimension.builder().name("Security").value(String.valueOf(key.securityId)).build(),
+                Dimension.builder().name("SecurityId").value(String.valueOf(key.securityId)).build(),
+                Dimension.builder().name("ExchangeId").value(String.valueOf(key.exchangeId)).build(),
                 Dimension.builder().name("Timestamp").value(key.timestamp).build(),
                 Dimension.builder().name("Schema").value(key.schemaType).build()
         };
@@ -210,12 +210,12 @@ public class MarketDataAggregator {
         for (var s3Object : listResponse.contents()) {
             Matcher matcher = FILE_PATTERN.matcher(s3Object.key());
             if (matcher.matches()) {
-                int exchangeId = Integer.parseInt(matcher.group(1));
-                int listingId = Integer.parseInt(matcher.group(2));
+                int securityId = Integer.parseInt(matcher.group(1));
+                int exchangeId = Integer.parseInt(matcher.group(2));
                 String timestamp = matcher.group(3);
                 String schemaType = matcher.group(4);
 
-                var s3Key = new MarketDataKey(exchangeId, listingId, timestamp, schemaType);
+                var s3Key = new MarketDataKey(securityId, exchangeId, timestamp, schemaType);
                 outputFiles.computeIfAbsent(s3Key, k -> new HashSet<>()).add(s3Object.key());
             } else {
                 throw new IllegalArgumentException("Illegal key found in %s bucket: %s".formatted(this.inputBucket, s3Object.key()));
@@ -224,10 +224,10 @@ public class MarketDataAggregator {
         return outputFiles;
     }
 
-    private record MarketDataKey(int exchangeId, int securityId, String timestamp, String schemaType) {
+    private record MarketDataKey(int securityId, int exchangeId, String timestamp, String schemaType) {
         @Override
         public String toString() {
-            return "%d/%d/%s/%s.zst".formatted(exchangeId, securityId, timestamp, schemaType);
+            return "%d/%d/%s/%s.zst".formatted(securityId, exchangeId, timestamp, schemaType);
         }
     }
 

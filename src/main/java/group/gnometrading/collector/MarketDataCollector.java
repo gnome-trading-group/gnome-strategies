@@ -1,30 +1,29 @@
 package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdOutputStream;
+import com.lmax.disruptor.EventHandler;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import org.agrona.ExpandableArrayBuffer;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
-import java.io.File;
-import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 
-class MarketDataCollector {
+public class MarketDataCollector implements EventHandler<Schema>, AutoCloseable {
 
-    private static final String OUTPUT_DIRECTORY = "market-data";
-    private static final DateTimeFormatter HOUR_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHH");
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
 
     private final Logger logger;
     private final Clock clock;
@@ -32,11 +31,14 @@ class MarketDataCollector {
     private final Listing listing;
     private final String bucketName;
     private final SchemaType schemaType;
-    private final ExpandableArrayBuffer purgatory;
 
-    private ZstdOutputStream currentFileStream;
-    private LocalDateTime currentHour;
-    private String currentFileName;
+    private String key;
+
+    private final ExpandableArrayBuffer purgatory;
+    private final ByteArrayOutputStream rawBuffer;
+    private ZstdOutputStream outputStream;
+
+    private LocalDateTime minuteStart;
 
     public MarketDataCollector(
             Logger logger,
@@ -52,78 +54,91 @@ class MarketDataCollector {
         this.listing = listing;
         this.bucketName = bucketName;
         this.schemaType = schemaType;
-        this.purgatory = new ExpandableArrayBuffer(1 << 16); // 64kb
-        this.currentHour = LocalDateTime.now(this.clock);
-        openNewFile();
+        this.purgatory = new ExpandableArrayBuffer(1 << 12);
+        this.rawBuffer = new ByteArrayOutputStream();
+
+        this.minuteStart = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
+        this.openNewStream();
+        this.attachShutdownHook();
     }
 
-    public void onEvent(final Schema schema) throws Exception {
-        LocalDateTime now = LocalDateTime.now(this.clock);
-        if (!now.truncatedTo(ChronoUnit.HOURS).equals(currentHour.truncatedTo(ChronoUnit.HOURS))) {
-            logger.logf(LogMessage.DEBUG, "Switching hour to %s from %s", now.truncatedTo(ChronoUnit.HOURS), currentHour.truncatedTo(ChronoUnit.HOURS));
-            cycleFile();
-            currentHour = now;
-            openNewFile();
+    public void onEvent(final Schema schema, long sequence, boolean endOfBatch) throws Exception {
+        long epochSeconds = schema.getEventTimestamp() / 1_000_000_000L;
+        long nanoAdjustment = schema.getEventTimestamp() % 1_000_000_000L;
+
+        Instant instant = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
+        LocalDateTime now = LocalDateTime.ofInstant(instant, clock.getZone());
+
+        if (!now.minusMinutes(1).isBefore(this.minuteStart)) {
+            logger.logf(LogMessage.DEBUG, "Switching minute to %s from %s", now.truncatedTo(ChronoUnit.MINUTES), this.minuteStart);
+            this.uploadFile();
+
+            this.minuteStart = now.truncatedTo(ChronoUnit.MINUTES);
+            this.openNewStream();
         }
 
         try {
             schema.buffer.getBytes(0, this.purgatory, 0, schema.totalMessageSize());
-            currentFileStream.write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
+            outputStream.write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
         } catch (IOException e) {
             logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write to file stream: %s", e.getMessage());
             throw new RuntimeException(e);
         }
     }
 
-    public void cycleFile() {
-        try {
-            if (currentFileStream != null) {
-                currentFileStream.close();
-            }
-
-            uploadToS3();
-            Files.deleteIfExists(Paths.get(currentFileName));
-
-            logger.logf(LogMessage.DEBUG, "File uploaded to S3 and deleted locally: %s", currentFileName);
-        } catch (IOException e) {
-            throw new RuntimeException("Error cycling file", e);
-        }
-    }
-
     private String buildKey() {
-        return "%d/%d/%s/%s.zst".formatted(listing.securityId(), listing.exchangeId(), currentHour.format(HOUR_FORMAT), this.schemaType.getIdentifier());
+        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
+        return "%d/%d/%s/%s/%s.zst".formatted(
+                listing.securityId(),
+                listing.exchangeId(),
+                this.minuteStart.format(TIME_FORMAT),
+                this.schemaType.getIdentifier(),
+                uniqueId
+        );
     }
 
-    private void uploadToS3() {
-        try {
-            final File file = new File(this.currentFileName);
-            final String key = buildKey();
+    private void uploadFile() throws IOException {
+        this.outputStream.close();
 
-            PutObjectRequest request = PutObjectRequest.builder()
-                    .bucket(this.bucketName)
-                    .key(key)
-                    .build();
-
-            s3Client.putObject(request, file.toPath());
-            logger.logf(LogMessage.DEBUG, "Uploaded file to S3: %s", key);
-
-        } catch (S3Exception e) {
-            throw new RuntimeException("Failed to upload file to S3: " + e.getMessage(), e);
+        if (rawBuffer.size() == 0) {
+            logger.logf(LogMessage.DEBUG, "Skipping upload for empty buffer");
+            return;
         }
+
+        logger.logf(LogMessage.DEBUG, "Uploading file: %s", this.key);
+        var request = PutObjectRequest.builder()
+                .bucket(this.bucketName)
+                .key(this.key)
+                .build();
+        this.s3Client.putObject(request, RequestBody.fromBytes(this.rawBuffer.toByteArray()));
     }
 
-    private void openNewFile() {
-        currentFileName = "./%s/%d/%s/%s.zst".formatted(OUTPUT_DIRECTORY, this.listing.listingId(), this.schemaType.getIdentifier(), currentHour.format(HOUR_FORMAT));
-        logger.logf(LogMessage.DEBUG, "Opening new file: %s", currentFileName);
+    private void openNewStream() {
+        this.key = buildKey();
+        logger.logf(LogMessage.DEBUG, "Opening new S3 file stream: %s", this.key);
+
         try {
-            File targetFile = new File(currentFileName);
-            File parent = targetFile.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs()) {
-                throw new IllegalStateException("Unable to create directory: " + parent);
-            }
-            currentFileStream = new ZstdOutputStream(new FileOutputStream(currentFileName));
+            this.rawBuffer.reset();
+            this.outputStream = new ZstdOutputStream(this.rawBuffer);
         } catch (IOException e) {
-            throw new RuntimeException("Error while creating new file", e);
+            logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to create new file stream: %s", e.getMessage());
+            throw new RuntimeException(e);
         }
+    }
+
+    private void attachShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                this.logger.logf(LogMessage.DEBUG, "Market data collector is exiting... attempting to cycle files.");
+                this.close();
+            } catch (Exception e) {
+                this.logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to cycle files: %s", e.getMessage());
+            }
+        }));
+    }
+
+    @Override
+    public void close() throws Exception {
+        this.uploadFile();
     }
 }

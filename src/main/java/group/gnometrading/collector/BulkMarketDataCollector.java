@@ -48,11 +48,11 @@ public class BulkMarketDataCollector implements EventHandler<Schema> {
     public void onEvent(Schema schema, long sequence, boolean endOfBatch) throws Exception {
         for (var item : this.collectors.entrySet()) {
             if (item.getKey() == this.originalType) {
-                item.getValue().onEvent(schema);
+                item.getValue().onEvent(schema, sequence, endOfBatch);
             } else {
                 Schema conversion = this.converters.get(item.getKey()).convert(schema);
                 if (conversion != null) {
-                    item.getValue().onEvent(conversion);
+                    item.getValue().onEvent(conversion, sequence, endOfBatch);
                 }
             }
         }
@@ -62,7 +62,11 @@ public class BulkMarketDataCollector implements EventHandler<Schema> {
     public void onShutdown() {
         logger.logf(LogMessage.DEBUG, "Market data collector is exiting... attempting to cycle files.");
         for (MarketDataCollector collector : this.collectors.values()) {
-            collector.cycleFile();
+            try {
+                collector.close();
+            } catch (Exception e) {
+                logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to cycle files: %s", e.getMessage());
+            }
         }
     }
 }
