@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
@@ -21,7 +22,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
-public class MarketDataCollector implements EventHandler<Schema>, AutoCloseable {
+public class MarketDataCollector implements EventHandler<Schema>, Closeable {
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
 
@@ -39,6 +40,7 @@ public class MarketDataCollector implements EventHandler<Schema>, AutoCloseable 
     private ZstdOutputStream outputStream;
 
     private LocalDateTime minuteStart;
+    private volatile boolean closed = false;
 
     public MarketDataCollector(
             Logger logger,
@@ -63,6 +65,10 @@ public class MarketDataCollector implements EventHandler<Schema>, AutoCloseable 
     }
 
     public void onEvent(final Schema schema, long sequence, boolean endOfBatch) throws Exception {
+        if (closed) {
+            return;
+        }
+
         long epochSeconds = schema.getEventTimestamp() / 1_000_000_000L;
         long nanoAdjustment = schema.getEventTimestamp() % 1_000_000_000L;
 
@@ -138,7 +144,16 @@ public class MarketDataCollector implements EventHandler<Schema>, AutoCloseable 
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() throws IOException {
+        if (closed) {
+            logger.logf(LogMessage.DEBUG, "MarketDataCollector already closed, skipping");
+            return;
+        }
+
+        closed = true;
+
         this.uploadFile();
+
+        logger.logf(LogMessage.DEBUG, "MarketDataCollector closed successfully");
     }
 }
