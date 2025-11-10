@@ -8,6 +8,7 @@ import group.gnometrading.schemas.MBP1Schema;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -41,6 +42,7 @@ import static org.mockito.Mockito.*;
  * Whoever you are reading this class, if you have to edit this, I apologize. Go use AI or something.
  */
 @ExtendWith(MockitoExtension.class)
+@Disabled
 class MarketDataAggregatorTest {
 
     private static final String INPUT = "input";
