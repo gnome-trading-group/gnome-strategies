@@ -121,7 +121,7 @@ public class MarketDataAggregator {
             throw new RuntimeException(e);
         }
         logger.logf(LogMessage.DEBUG, "Total: %d | Missing: %d | Duplicates: %d", totalRecords, missingRecords, duplicateRecords);
-        pushMetricsToCloudWatch(marketDataKey, totalRecords, uniqueRecords, missingRecords, duplicateRecords);
+//        pushMetricsToCloudWatch(marketDataKey, totalRecords, uniqueRecords, missingRecords, duplicateRecords);
     }
 
     private void writeAggregatedKey(MarketDataKey key, List<ByteBuffer> records) throws IOException {
@@ -146,8 +146,6 @@ public class MarketDataAggregator {
         var dimensions = new Dimension[] {
                 Dimension.builder().name("SecurityId").value(String.valueOf(key.securityId)).build(),
                 Dimension.builder().name("ExchangeId").value(String.valueOf(key.exchangeId)).build(),
-                Dimension.builder().name("Timestamp").value(key.timestamp).build(),
-                Dimension.builder().name("Schema").value(key.schemaType).build()
         };
         List<MetricDatum> metrics = Arrays.asList(
                 MetricDatum.builder()
