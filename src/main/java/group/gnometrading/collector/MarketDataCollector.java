@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -32,6 +33,7 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
     private final Listing listing;
     private final String bucketName;
     private final SchemaType schemaType;
+    private final Duration cycleDuration;
 
     private String key;
 
@@ -39,7 +41,7 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
     private final ByteArrayOutputStream rawBuffer;
     private ZstdOutputStream outputStream;
 
-    private LocalDateTime minuteStart;
+    private LocalDateTime cycleStart;
     private volatile boolean closed = false;
 
     public MarketDataCollector(
@@ -56,10 +58,11 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         this.listing = listing;
         this.bucketName = bucketName;
         this.schemaType = schemaType;
+        this.cycleDuration = mapSchemaToCycleDuration(schemaType);
         this.purgatory = new ExpandableArrayBuffer(1 << 12);
         this.rawBuffer = new ByteArrayOutputStream();
 
-        this.minuteStart = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
+        this.cycleStart = LocalDateTime.now(clock).truncatedTo(getCycleChronoUnit());
         this.openNewStream();
         this.attachShutdownHook();
     }
@@ -75,11 +78,11 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         Instant instant = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
         LocalDateTime now = LocalDateTime.ofInstant(instant, clock.getZone());
 
-        if (!now.minusMinutes(1).isBefore(this.minuteStart)) {
-            logger.logf(LogMessage.DEBUG, "Switching minute to %s from %s", now.truncatedTo(ChronoUnit.MINUTES), this.minuteStart);
+        if (!now.minus(cycleDuration).isBefore(this.cycleStart)) {
+            logger.logf(LogMessage.DEBUG, "Switching cycle to %s from %s", now.truncatedTo(getCycleChronoUnit()), this.cycleStart);
             this.uploadFile();
 
-            this.minuteStart = now.truncatedTo(ChronoUnit.MINUTES);
+            this.cycleStart = now.truncatedTo(getCycleChronoUnit());
             this.openNewStream();
         }
 
@@ -97,7 +100,7 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         return "%d/%d/%s/%s/%s.zst".formatted(
                 listing.securityId(),
                 listing.exchangeId(),
-                this.minuteStart.format(TIME_FORMAT),
+                this.cycleStart.format(TIME_FORMAT),
                 this.schemaType.getIdentifier(),
                 uniqueId
         );
@@ -155,5 +158,23 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         this.uploadFile();
 
         logger.logf(LogMessage.DEBUG, "MarketDataCollector closed successfully");
+    }
+
+    private Duration mapSchemaToCycleDuration(SchemaType schemaType) {
+        return switch (schemaType) {
+            case MBO, MBP_10, MBP_1, BBO_1S, BBO_1M, TRADES, OHLCV_1S, OHLCV_1M -> Duration.ofMinutes(1);
+            case OHLCV_1H -> Duration.ofHours(1);
+        };
+    }
+
+    private ChronoUnit getCycleChronoUnit() {
+        if (cycleDuration.toMinutes() == 1) {
+            return ChronoUnit.MINUTES;
+        } else if (cycleDuration.toHours() == 1) {
+            return ChronoUnit.HOURS;
+        } else if (cycleDuration.toDays() == 1) {
+            return ChronoUnit.DAYS;
+        }
+        throw new IllegalArgumentException("Unsupported cycle duration: " + cycleDuration);
     }
 }
