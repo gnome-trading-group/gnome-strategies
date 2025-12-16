@@ -5,43 +5,31 @@ import com.lmax.disruptor.EventHandler;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
-import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
 import org.agrona.ExpandableArrayBuffer;
-import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
-import java.util.UUID;
 
 public class MarketDataCollector implements EventHandler<Schema>, Closeable {
-
-    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
 
     private final Logger logger;
     private final Clock clock;
     private final S3Client s3Client;
     private final Listing listing;
     private final String bucketName;
-    private final SchemaType schemaType;
-    private final Duration cycleDuration;
 
-    private String key;
+    private MarketDataEntry entry;
 
     private final ExpandableArrayBuffer purgatory;
     private final ByteArrayOutputStream rawBuffer;
     private ZstdOutputStream outputStream;
 
-    private LocalDateTime cycleStart;
     private volatile boolean closed = false;
 
     public MarketDataCollector(
@@ -49,20 +37,18 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
             Clock clock,
             S3Client s3Client,
             Listing listing,
-            String bucketName,
-            SchemaType schemaType
+            String bucketName
     ) {
         this.logger = logger;
         this.clock = clock;
         this.s3Client = s3Client;
         this.listing = listing;
         this.bucketName = bucketName;
-        this.schemaType = schemaType;
-        this.cycleDuration = mapSchemaToCycleDuration(schemaType);
         this.purgatory = new ExpandableArrayBuffer(1 << 12);
         this.rawBuffer = new ByteArrayOutputStream();
 
-        this.cycleStart = LocalDateTime.now(clock).truncatedTo(getCycleChronoUnit());
+        LocalDateTime cycleStart = LocalDateTime.now(clock).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
+        this.entry = new MarketDataEntry(this.listing, cycleStart, MarketDataEntry.EntryType.RAW);
         this.openNewStream();
         this.attachShutdownHook();
     }
@@ -78,11 +64,12 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         Instant instant = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
         LocalDateTime now = LocalDateTime.ofInstant(instant, clock.getZone());
 
-        if (!now.minus(cycleDuration).isBefore(this.cycleStart)) {
-            logger.logf(LogMessage.DEBUG, "Switching cycle to %s from %s", now.truncatedTo(getCycleChronoUnit()), this.cycleStart);
+        if (!now.minus(MarketDataEntry.CYCLE_CHRONO_UNIT.getDuration()).isBefore(this.entry.getTimestamp())) {
+            LocalDateTime nextCycleStart = now.truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
+            logger.logf(LogMessage.DEBUG, "Switching cycle to %s from %s", nextCycleStart, this.entry.getTimestamp());
             this.uploadFile();
 
-            this.cycleStart = now.truncatedTo(getCycleChronoUnit());
+            this.entry = new MarketDataEntry(this.listing, nextCycleStart, MarketDataEntry.EntryType.RAW);
             this.openNewStream();
         }
 
@@ -95,17 +82,6 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         }
     }
 
-    private String buildKey() {
-        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
-        return "%d/%d/%s/%s/%s.zst".formatted(
-                listing.securityId(),
-                listing.exchangeId(),
-                this.cycleStart.format(TIME_FORMAT),
-                this.schemaType.getIdentifier(),
-                uniqueId
-        );
-    }
-
     private void uploadFile() throws IOException {
         this.outputStream.close();
 
@@ -114,17 +90,12 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
             return;
         }
 
-        logger.logf(LogMessage.DEBUG, "Uploading file: %s", this.key);
-        var request = PutObjectRequest.builder()
-                .bucket(this.bucketName)
-                .key(this.key)
-                .build();
-        this.s3Client.putObject(request, RequestBody.fromBytes(this.rawBuffer.toByteArray()));
+        logger.logf(LogMessage.DEBUG, "Uploading file: %s", this.entry.getKey());
+        this.entry.saveToS3(this.s3Client, this.bucketName, this.rawBuffer.toByteArray());
     }
 
     private void openNewStream() {
-        this.key = buildKey();
-        logger.logf(LogMessage.DEBUG, "Opening new S3 file stream: %s", this.key);
+        logger.logf(LogMessage.DEBUG, "Opening new S3 file stream: %s", this.entry.getKey());
 
         try {
             this.rawBuffer.reset();
@@ -158,23 +129,5 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         this.uploadFile();
 
         logger.logf(LogMessage.DEBUG, "MarketDataCollector closed successfully");
-    }
-
-    private Duration mapSchemaToCycleDuration(SchemaType schemaType) {
-        return switch (schemaType) {
-            case MBO, MBP_10, MBP_1, BBO_1S, BBO_1M, TRADES, OHLCV_1S, OHLCV_1M -> Duration.ofMinutes(1);
-            case OHLCV_1H -> Duration.ofHours(1);
-        };
-    }
-
-    private ChronoUnit getCycleChronoUnit() {
-        if (cycleDuration.toMinutes() == 1) {
-            return ChronoUnit.MINUTES;
-        } else if (cycleDuration.toHours() == 1) {
-            return ChronoUnit.HOURS;
-        } else if (cycleDuration.toDays() == 1) {
-            return ChronoUnit.DAYS;
-        }
-        throw new IllegalArgumentException("Unsupported cycle duration: " + cycleDuration);
     }
 }
