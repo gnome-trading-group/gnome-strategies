@@ -59,7 +59,7 @@ public class MarketDataTransformer {
 
     private void transformKey(Listing listing) {
         for (SchemaType toSchemaType : SchemaType.values()) {
-            if (toSchemaType == listing.schemaType() || !SchemaConversionRegistry.hasConverter(listing.schemaType(), toSchemaType)) {
+            if (toSchemaType == listing.exchange().schemaType() || !SchemaConversionRegistry.hasConverter(listing.exchange().schemaType(), toSchemaType)) {
                 continue;
             }
             transformKey(listing, toSchemaType);
@@ -94,7 +94,7 @@ public class MarketDataTransformer {
         List<Schema> schemas = keys.stream()
                 .flatMap(key -> key.loadFromS3(s3Client, bucket).stream())
                 .toList();
-        SchemaConverter converter = SchemaConversionRegistry.getConverter(listing.schemaType(), toSchemaType);
+        SchemaConverter converter = SchemaConversionRegistry.getConverter(listing.exchange().schemaType(), toSchemaType);
         Schema lastSchemaTransformed = null;
         List<Schema> outputSchemas = new ArrayList<>();
         for (Schema schema : schemas) {
@@ -145,7 +145,7 @@ public class MarketDataTransformer {
         Map<MarketDataEntry, List<Schema>> outputEntries = new LinkedHashMap<>();
         for (Schema schema : schemas) {
             LocalDateTime timestamp = getSchemaDateTime(schema);
-            MarketDataEntry entry = new MarketDataEntry(listing.securityId(), listing.exchangeId(), toSchemaType, timestamp, MarketDataEntry.EntryType.AGGREGATED);
+            MarketDataEntry entry = new MarketDataEntry(listing.security().securityId(), listing.exchange().exchangeId(), toSchemaType, timestamp, MarketDataEntry.EntryType.AGGREGATED);
             outputEntries.computeIfAbsent(entry, k -> new ArrayList<>()).add(schema);
         }
         return outputEntries;

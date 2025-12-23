@@ -9,7 +9,9 @@ import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.MBP10Schema;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
+import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
+import group.gnometrading.sm.Security;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -92,7 +94,13 @@ class MarketDataMergerTest {
      * Helper to create a fake Listing with specific parameters.
      */
     private Listing listing(int securityId, int exchangeId, SchemaType schemaType) {
-        return new Listing(securityId, exchangeId, securityId, "test-symbol", "test-name", schemaType);
+        return new Listing(
+                securityId,
+                new Exchange(exchangeId, "test-exchange", "test-region", schemaType),
+                new Security(securityId, "test-security", 1),
+                "test-symbol",
+                "test-name"
+        );
     }
 
     /**

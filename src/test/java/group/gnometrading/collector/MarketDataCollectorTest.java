@@ -4,7 +4,9 @@ import com.github.luben.zstd.ZstdInputStream;
 import group.gnometrading.logging.NullLogger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
+import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
+import group.gnometrading.sm.Security;
 import org.agrona.MutableDirectBuffer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +38,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class MarketDataCollectorTest {
 
-    private static final Listing LISTING = new Listing(532, 151, 499, "id", "id", SchemaType.MBO);
+    private static final Listing LISTING = new Listing(532, new Exchange(151, "test-exchange", "test-region", SchemaType.MBO), new Security(499, "test-security", 1), "id", "id");
     private static final String OUTPUT_BUCKET = "test-bucket";
     private static final Pattern KEY_PATTERN = Pattern.compile("^499/151/\\d{4}/\\d{1,2}/\\d{1,2}/\\d{1,2}/\\d{1,2}/mbo/[a-f0-9]{8}\\.zst$");
 

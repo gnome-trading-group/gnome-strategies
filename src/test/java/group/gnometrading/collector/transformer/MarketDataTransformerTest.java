@@ -12,7 +12,9 @@ import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.schemas.converters.SchemaConversionRegistry;
 import group.gnometrading.schemas.converters.mbp1.MBP1ToBBO1MConverter;
 import group.gnometrading.schemas.converters.mbp10.MBP10ToMBP1Converter;
+import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
+import group.gnometrading.sm.Security;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -126,7 +128,13 @@ class MarketDataTransformerTest {
      * Helper to create a fake Listing with specific parameters.
      */
     private Listing listing(int securityId, int exchangeId, SchemaType schemaType) {
-        return new Listing(securityId, exchangeId, securityId, "test-symbol", "test-name", schemaType);
+        return new Listing(
+                securityId,
+                new Exchange(exchangeId, "test-exchange", "test-region", schemaType),
+                new Security(securityId, "test-security", 1),
+                "test-symbol",
+                "test-name"
+        );
     }
 
     /**

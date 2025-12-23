@@ -44,11 +44,25 @@ public class MarketDataEntry {
     private final String uuid;
 
     public MarketDataEntry(Listing listing, LocalDateTime timestamp, EntryType entryType) {
-        this(listing.securityId(), listing.exchangeId(), listing.schemaType(), timestamp, entryType, UUID.randomUUID().toString().substring(0, 8));
+        this(
+                listing.security().securityId(),
+                listing.exchange().exchangeId(),
+                listing.exchange().schemaType(),
+                timestamp,
+                entryType,
+                UUID.randomUUID().toString().substring(0, 8)
+        );
     }
 
     public MarketDataEntry(Listing listing, LocalDateTime timestamp, EntryType entryType, String uuid) {
-        this(listing.securityId(), listing.exchangeId(), listing.schemaType(), timestamp, entryType, uuid);
+        this(
+                listing.security().securityId(),
+                listing.exchange().exchangeId(),
+                listing.exchange().schemaType(),
+                timestamp,
+                entryType,
+                uuid
+        );
     }
 
     public MarketDataEntry(int securityId, int exchangeId, SchemaType schemaType, LocalDateTime timestamp, EntryType entryType) {
@@ -199,16 +213,16 @@ public class MarketDataEntry {
         final String keyPrefix;
         if (day != null) {
             keyPrefix = "%d/%d/%d/%d/%d/".formatted(
-                    listing.securityId(),
-                    listing.exchangeId(),
+                    listing.security().securityId(),
+                    listing.exchange().exchangeId(),
                     day.getYear(),
                     day.getMonthValue(),
                     day.getDayOfMonth()
             );
         } else {
             keyPrefix = "%d/%d/".formatted(
-                    listing.securityId(),
-                    listing.exchangeId()
+                    listing.security().securityId(),
+                    listing.exchange().exchangeId()
             );
         }
         var response = s3Client.listObjectsV2Paginator(request ->

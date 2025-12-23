@@ -5,7 +5,9 @@ import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.schemas.MBP10Schema;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
+import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
+import group.gnometrading.sm.Security;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -51,7 +53,13 @@ class MarketDataEntryTest {
      * Makes it easy to create test data with readable syntax.
      */
     private Listing listing(int securityId, int exchangeId, SchemaType schemaType) {
-        return new Listing(securityId, exchangeId, securityId, "test-symbol", "test-name", schemaType);
+        return new Listing(
+                securityId,
+                new Exchange(exchangeId, "test-exchange", "test-region", schemaType),
+                new Security(securityId, "test-security", 1),
+                "test-symbol",
+                "test-name"
+        );
     }
 
     /**
