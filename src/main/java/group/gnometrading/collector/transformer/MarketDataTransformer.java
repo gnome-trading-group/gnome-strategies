@@ -91,8 +91,9 @@ public class MarketDataTransformer {
             return;
         }
 
-        List<Schema> schemas = keys.stream()
-                .flatMap(key -> key.loadFromS3(s3Client, bucket).stream())
+        List<Schema> schemas = keys.parallelStream()
+                .map(key -> key.loadFromS3(s3Client, bucket))
+                .flatMap(Collection::stream)
                 .toList();
         SchemaConverter converter = SchemaConversionRegistry.getConverter(listing.exchange().schemaType(), toSchemaType);
         Schema lastSchemaTransformed = null;
@@ -114,14 +115,14 @@ public class MarketDataTransformer {
         }
 
         Map<MarketDataEntry, List<Schema>> outputEntries = groupSchemasByEntry(listing, toSchemaType, outputSchemas);
-        for (var entry : outputEntries.entrySet()) {
+        outputEntries.entrySet().parallelStream().forEach(entry -> {
             try {
                 entry.getKey().saveToS3(s3Client, bucket, entry.getValue());
             } catch (IOException e) {
                 logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write transformed key: %s", e.getMessage());
                 throw new RuntimeException(e);
             }
-        }
+        });
 
         var putItemRequest = PutItemRequest.builder()
                 .tableName(tableName)

@@ -63,10 +63,10 @@ public class MarketDataMerger {
             return Set.of();
         }
 
-        for (var item : input.entrySet()) {
-            logger.logf(LogMessage.DEBUG, "Running key %s with %d entries", item.getKey().toString(), item.getValue().size());
-            mergeKeys(item.getKey(), item.getValue());
-        }
+        input.entrySet().parallelStream().forEach(entry -> {
+            logger.logf(LogMessage.DEBUG, "Running key %s with %d entries", entry.getKey().toString(), entry.getValue().size());
+            mergeKeys(entry.getKey(), entry.getValue());
+        });
 
         Set<String> allKeys = input.values().stream()
                 .flatMap(Collection::stream)
@@ -85,7 +85,7 @@ public class MarketDataMerger {
         List<ObjectIdentifier> targetKeys = keys.stream()
                 .map(key -> ObjectIdentifier.builder().key(key).build())
                 .toList();
-        for (ObjectIdentifier object : targetKeys) {
+        targetKeys.parallelStream().forEach(object -> {
             var copyResponse = s3Client.copyObject(request -> request
                     .destinationBucket(archiveBucket)
                     .destinationKey(object.key())
@@ -96,8 +96,9 @@ public class MarketDataMerger {
             if (!copyResponse.sdkHttpResponse().isSuccessful()) {
                 throw new RuntimeException("Failed to copy key %s to archive bucket".formatted(object.key()));
             }
-        }
+        });
 
+        logger.logf(LogMessage.DEBUG, "Deleting %s keys from input bucket", keys.size());
         var response = s3Client.deleteObjects(
                 request -> request
                         .bucket(inputBucket)
