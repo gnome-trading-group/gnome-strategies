@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
  */
 public class MarketDataMerger {
 
-
+    private static final int MAX_KEYS = 5000;
     private static final Duration MERGE_DELAY = Duration.ofMinutes(60);
 
     private final Logger logger;
@@ -144,6 +144,7 @@ public class MarketDataMerger {
                 .stream()
                 .flatMap(response -> response.contents().stream())
                 .sorted(Comparator.comparing(S3Object::key))
+                .limit(MAX_KEYS)
                 .toList();
         Map<MarketDataEntry, List<MarketDataEntry>> outputFiles = new LinkedHashMap<>();
 
