@@ -17,6 +17,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -29,6 +30,7 @@ import java.util.stream.Collectors;
 public class MarketDataMerger {
 
     private static final int MAX_KEYS = 5000;
+    private static final int MAX_DELETE_SIZE = 1000;
     private static final Duration MERGE_DELAY = Duration.ofMinutes(60);
 
     private final Logger logger;
@@ -100,19 +102,25 @@ public class MarketDataMerger {
         });
 
         logger.logf(LogMessage.DEBUG, "Deleting %s keys from input bucket", keys.size());
-        var response = s3Client.deleteObjects(
-                request -> request
-                        .bucket(inputBucket)
-                        .delete(delete -> delete.objects(targetKeys))
-        );
-        if (response.hasErrors()) {
-            for (S3Error error : response.errors()) {
-                logger.logf(LogMessage.UNKNOWN_ERROR, "Error deleting key %s: %s", error.key(), error.message());
+        AtomicInteger counter = new AtomicInteger();
+        Collection<List<ObjectIdentifier>> batches = targetKeys.stream()
+                .collect(Collectors.groupingBy(it -> counter.getAndIncrement() / MAX_DELETE_SIZE))
+                .values();
+
+        batches.parallelStream().forEach(batch -> {
+            var response = s3Client.deleteObjects(
+                    request -> request
+                            .bucket(inputBucket)
+                            .delete(delete -> delete.objects(batch))
+            );
+            if (response.hasErrors()) {
+                for (S3Error error : response.errors()) {
+                    logger.logf(LogMessage.UNKNOWN_ERROR, "Error deleting key %s: %s", error.key(), error.message());
+                }
+                throw new RuntimeException("Error while deleting keys. Please check the logs");
             }
-            throw new RuntimeException("Error while deleting keys. Please check the logs");
-        } else {
-            logger.logf(LogMessage.DEBUG, "Successfully deleted keys");
-        }
+        });
+        logger.logf(LogMessage.DEBUG, "Successfully deleted keys");
     }
 
     private void mergeKeys(MarketDataEntry mergedEntry, List<MarketDataEntry> rawEntries) {
