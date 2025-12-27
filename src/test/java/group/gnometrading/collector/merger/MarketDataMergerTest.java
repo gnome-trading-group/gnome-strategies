@@ -21,7 +21,6 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.core.pagination.sync.SdkIterable;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
@@ -36,6 +35,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -232,8 +232,8 @@ class MarketDataMergerTest {
     void testRunMergerWithNoRawFiles() {
         // Given: S3 has no raw files
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = Collections::emptyIterator;
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response emptyResponse = ListObjectsV2Response.builder().contents(Collections.emptyList()).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(emptyResponse));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // When: Running merger
@@ -260,8 +260,8 @@ class MarketDataMergerTest {
         S3Object recentObj = S3Object.builder().key(recentKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Collections.singletonList(recentObj).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(recentObj)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock MarketDataEntry.fromKey to return a raw entry from 14:00
@@ -291,8 +291,8 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Collections.singletonList(rawObj).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock SecurityMaster to return the listing
@@ -348,8 +348,8 @@ class MarketDataMergerTest {
         S3Object obj2 = S3Object.builder().key(key2).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Arrays.asList(obj1, obj2)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock MarketDataEntry.fromKey for both keys
@@ -414,8 +414,8 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Collections.singletonList(rawObj).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock MarketDataEntry.fromKey
@@ -455,8 +455,8 @@ class MarketDataMergerTest {
         S3Object obj2 = S3Object.builder().key(key2).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Arrays.asList(obj1, obj2)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         MarketDataEntry rawEntry1 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
@@ -491,8 +491,8 @@ class MarketDataMergerTest {
         S3Object obj2 = S3Object.builder().key(key2).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Arrays.asList(obj1, obj2)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         MarketDataEntry rawEntry1 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
@@ -530,8 +530,8 @@ class MarketDataMergerTest {
         S3Object oldObj = S3Object.builder().key(oldKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Collections.singletonList(oldObj).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(oldObj)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Use a spy so we can mock loadFromS3 to return empty list (bypassing the schema size bug)
@@ -554,8 +554,8 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Collections.singletonList(rawObj).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
@@ -590,8 +590,8 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        SdkIterable<S3Object> contents = () -> Collections.singletonList(rawObj).iterator();
-        when(mockIterable.contents()).thenReturn(contents);
+        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");

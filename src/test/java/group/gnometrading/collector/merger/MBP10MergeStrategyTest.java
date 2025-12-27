@@ -111,8 +111,8 @@ class MBP10MergeStrategyTest {
      * Test cases for merge strategy. Each case is:
      * - description: Human-readable description
      * - input: Collector notation "c1:seq,seq;c2:seq,seq"
-     * - expectedOutput: Expected sequence numbers "seq,seq,seq"
-     * - expectMissingLogs: Whether missing record logs are expected
+     * - expectedOutput: Expected sequence numbers from the collector with most records
+     * - expectDifferenceLogs: Whether difference logs are expected (when collectors have unequal counts)
      */
     static Stream<Arguments> mergeTestCases() {
         return Stream.of(
@@ -131,7 +131,7 @@ class MBP10MergeStrategyTest {
             Arguments.of("Single collector, large sequence numbers",
                 "c1:999999,1000000", "999999,1000000", false),
 
-            // Two collectors - equal counts (no missing logs)
+            // Two collectors - equal counts (no difference logs)
             Arguments.of("Two collectors, equal single record per sequence",
                 "c1:100;c2:100", "100", false),
             Arguments.of("Two collectors, equal multiple records per sequence",
@@ -139,98 +139,108 @@ class MBP10MergeStrategyTest {
             Arguments.of("Two collectors, equal records across multiple sequences",
                 "c1:100,100,101,101;c2:100,100,101,101", "100,100,101,101", false),
 
-            // Two collectors - unequal counts (missing logs expected)
-            Arguments.of("Two collectors, c2 missing one record for sequence",
+            // Two collectors - unequal counts (difference logs expected)
+            // c1 has 2, c2 has 1 -> c1 wins with its records
+            Arguments.of("Two collectors, c2 missing one record",
                 "c1:100,100;c2:100", "100,100", true),
+            // c1 has 4, c2 has 2 -> c1 wins
             Arguments.of("Two collectors, c2 missing entire sequence",
                 "c1:100,100,101,101;c2:100,100", "100,100,101,101", true),
+            // c1 has 3, c2 has 2 -> c1 wins
             Arguments.of("Two collectors, c1 has more records",
                 "c1:100,100,100;c2:100,100", "100,100,100", true),
-            Arguments.of("Two collectors, different max per sequence",
-                "c1:100,100,101;c2:100,101,101,101", "100,100,101,101,101", true),
+            // c1 has 3, c2 has 4 -> c2 wins with its records
+            Arguments.of("Two collectors, c2 has more total records",
+                "c1:100,100,101;c2:100,101,101,101", "100,101,101,101", true),
 
             // Two collectors - one empty
             Arguments.of("Two collectors, c2 empty",
                 "c1:100,100;c2:", "100,100", true),
 
-            // Three collectors
+            // Three collectors - all equal
             Arguments.of("Three collectors, all equal",
                 "c1:100,101;c2:100,101;c3:100,101", "100,101", false),
+            // c1 has 2, c2 has 1, c3 has 2 -> c1 wins (first with max)
             Arguments.of("Three collectors, c2 missing sequence",
                 "c1:100,101;c2:100;c3:100,101", "100,101", true),
-            Arguments.of("Three collectors, varying counts per sequence",
-                "c1:100,100,101;c2:100,101,101;c3:100,100,100,101", "100,100,100,101,101", true),
+            // c1 has 3, c2 has 3, c3 has 4 -> c3 wins
+            Arguments.of("Three collectors, c3 has most records",
+                "c1:100,100,101;c2:100,101,101;c3:100,100,100,101", "100,100,100,101", true),
+            // c1 has 1, c2 has 1, c3 has 2 -> c3 wins
             Arguments.of("Three collectors, c3 has max for all sequences",
                 "c1:100;c2:100;c3:100,100", "100,100", true),
 
             // Edge cases with gaps
             Arguments.of("Non-contiguous sequences",
                 "c1:100,200,300", "100,200,300", false),
+            // c1 has 3, c2 has 2 -> c1 wins
             Arguments.of("Two collectors, non-contiguous, one missing middle",
                 "c1:100,200,300;c2:100,300", "100,200,300", true),
 
-            // Complex scenarios - c1 missing 101, c2 missing 100,102, c3 missing 101, c4 missing 100
-            // For seq 100: c1,c3,c4 have 1 each -> c1 wins
-            // For seq 101: c1,c3,c4 have 1 each, c2 missing -> c1 wins (but c3 has 2!) -> c3 wins with 2
+            // Four collectors - c1 has 2, c2 has 1, c3 has 2, c4 has 2 -> c1 wins (first with max)
             Arguments.of("Four collectors, mixed coverage",
-                "c1:100,101;c2:100;c3:101,101;c4:100,101", "100,101,101", true),
+                "c1:100,101;c2:100;c3:101,101;c4:100,101", "100,101", true),
 
             // Stress test - many sequences
             Arguments.of("Single collector, 20 sequential records",
                 "c1:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20",
                 "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20", false),
 
-            // Multiple records per sequence with varying counts
-            Arguments.of("Two collectors, multiple records per sequence, c1 wins all",
+            // c1 has 6, c2 has 4 -> c1 wins
+            Arguments.of("Two collectors, c1 has most records",
                 "c1:100,100,100,101,101,101;c2:100,100,101,101", "100,100,100,101,101,101", true),
-            Arguments.of("Two collectors, c2 wins for one sequence",
+            // c1 has 2, c2 has 3 -> c2 wins
+            Arguments.of("Two collectors, c2 wins with more records",
                 "c1:100,101;c2:100,100,101", "100,100,101", true),
 
-            // Out-of-order sequences within collector - output preserves encounter order (NOT sorted)
-            // Note: sortRecords uses LinkedHashMap which preserves insertion order, not sorted order
+            // Out-of-order sequences - output preserves order from winning collector
             Arguments.of("Single collector, out-of-order sequences preserves order",
                 "c1:102,100,101", "102,100,101", false),
-            // c1 adds 102, 100 to map; c2 adds 101 (100 already exists) -> order is 102, 100, 101
-            Arguments.of("Two collectors, out-of-order sequences preserves order",
-                "c1:102,100;c2:101,100", "102,100,101", true),
+            // c1 has 2, c2 has 2 -> c1 wins (first), output is c1's order
+            Arguments.of("Two collectors equal, first wins preserving its order",
+                "c1:102,100;c2:101,100", "102,100", false),
 
-            // Second collector wins (c2 has more records than c1)
+            // c1 has 1, c2 has 2 -> c2 wins
             Arguments.of("Two collectors, c2 wins with more records",
                 "c1:100;c2:100,100", "100,100", true),
+            // c1 has 2, c2 has 4 -> c2 wins
             Arguments.of("Two collectors, c2 wins for all sequences",
                 "c1:100,101;c2:100,100,101,101", "100,100,101,101", true),
 
             // Tie-breaking - first collector in iteration order wins
             Arguments.of("Two collectors, tie goes to first (c1)",
                 "c1:100,100;c2:100,100", "100,100", false),
+            // c1 has 1, c2 has 2, c3 has 2 -> c2 wins (first with max)
             Arguments.of("Three collectors, tie goes to first with max",
                 "c1:100;c2:100,100;c3:100,100", "100,100", true),
 
             // Sequence number edge cases
             Arguments.of("Sequence number 0",
                 "c1:0,1,2", "0,1,2", false),
+            // c1 has 2, c2 has 1 -> c1 wins
             Arguments.of("Two collectors with sequence 0",
                 "c1:0,0;c2:0", "0,0", true),
 
-            // Many collectors stress test
+            // Many collectors stress test - all equal
             Arguments.of("Five collectors, all equal",
                 "c1:100;c2:100;c3:100;c4:100;c5:100", "100", false),
+            // c1,c2,c4,c5 have 2, c3 has 1 -> c1 wins (first with max)
             Arguments.of("Five collectors, one missing",
                 "c1:100,101;c2:100,101;c3:100;c4:100,101;c5:100,101", "100,101", true),
 
-            // Complex interleaving - each collector has different sequences
-            Arguments.of("Three collectors, each has unique sequence",
-                "c1:100;c2:101;c3:102", "100,101,102", true),
+            // Each collector has 1 record -> c1 wins (first)
+            Arguments.of("Three collectors, each has unique sequence, c1 wins",
+                "c1:100;c2:101;c3:102", "100", false),
 
-            // All collectors missing records for same sequence (but at least one has it)
-            Arguments.of("Three collectors, all have fewer than max for one seq",
+            // c1 has 4, c2 has 3, c3 has 2 -> c1 wins
+            Arguments.of("Three collectors, c1 has most records",
                 "c1:100,100,100,101;c2:100,100,101;c3:100,101", "100,100,100,101", true)
         );
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("mergeTestCases")
-    void testMergeStrategy(String description, String input, String expectedOutput, boolean expectMissingLogs) {
+    void testMergeStrategy(String description, String input, String expectedOutput, boolean expectDifferenceLogs) {
         // Given: Parsed input
         Map<String, List<Schema>> collectors = parseCollectors(input);
         long[] expected = parseExpectedOutput(expectedOutput);
@@ -246,26 +256,14 @@ class MBP10MergeStrategyTest {
                 "Sequence mismatch at index " + i + " for: " + description);
         }
 
-        // Verify logging behavior - check that at least one "Missing" log was made
-        if (expectMissingLogs) {
-            // Try to verify with 3 args first (for "Missing %d records..." format)
-            // If that fails, try with 2 args (for "Missing records..." format)
-            boolean foundMissingLog = false;
-            try {
-                ArgumentCaptor<String> formatCaptor = ArgumentCaptor.forClass(String.class);
-                verify(logger, atLeastOnce()).logf(eq(LogMessage.DEBUG), formatCaptor.capture(), any(), any(), any());
-                foundMissingLog = formatCaptor.getAllValues().stream().anyMatch(f -> f.contains("Missing"));
-            } catch (AssertionError e) {
-                // Try with 2 args
-                try {
-                    ArgumentCaptor<String> formatCaptor = ArgumentCaptor.forClass(String.class);
-                    verify(logger, atLeastOnce()).logf(eq(LogMessage.DEBUG), formatCaptor.capture(), any(), any());
-                    foundMissingLog = formatCaptor.getAllValues().stream().anyMatch(f -> f.contains("Missing"));
-                } catch (AssertionError e2) {
-                    // Neither worked
-                }
-            }
-            assertTrue(foundMissingLog, "Expected missing record logs for: " + description);
+        // Verify logging behavior - check that at least one "fewer records" log was made
+        if (expectDifferenceLogs) {
+            ArgumentCaptor<String> formatCaptor = ArgumentCaptor.forClass(String.class);
+            verify(logger, atLeastOnce()).logf(eq(LogMessage.DEBUG), formatCaptor.capture(),
+                    any(), any(), any(), any(), any());
+            boolean foundDifferenceLog = formatCaptor.getAllValues().stream()
+                    .anyMatch(f -> f.contains("fewer records"));
+            assertTrue(foundDifferenceLog, "Expected difference log for: " + description);
         }
     }
 
@@ -281,15 +279,15 @@ class MBP10MergeStrategyTest {
     }
 
     @Test
-    void testNoMissingLogsWhenAllCollectorsEqual() {
+    void testNoDifferenceLogsWhenAllCollectorsEqual() {
         Map<String, List<Schema>> input = collectors(
                 "collector-1", 100L, 100L,
                 "collector-2", 100L, 100L
         );
         strategy.mergeRecords(logger, input);
-        // Verify no "Missing" logs with either 2 or 3 args
-        verify(logger, never()).logf(eq(LogMessage.DEBUG), contains("Missing"), any(), any(), any());
-        verify(logger, never()).logf(eq(LogMessage.DEBUG), contains("Missing"), any(), any());
+        // Verify no "fewer records" logs
+        verify(logger, never()).logf(eq(LogMessage.DEBUG), contains("fewer records"),
+                any(), any(), any(), any(), any());
     }
 }
 

@@ -19,50 +19,28 @@ public class MBP10MergeStrategy implements SchemaMergeStrategy {
             return List.of();
         }
 
-        Set<String> uniqueCollectors = entries.keySet();
-        List<Schema> output = new ArrayList<>();
-
-        Map<Long, Map<String, List<Schema>>> records = sortRecords(entries);
-        for (var entry : records.entrySet()) {
-            int numUniqueCollectors = entry.getValue().size();
-            if (numUniqueCollectors < uniqueCollectors.size()) {
-                for (String collector : uniqueCollectors) {
-                    if (!entry.getValue().containsKey(collector)) {
-                        logger.logf(LogMessage.DEBUG, "Missing records for sequence %d from key %s", entry.getKey(), collector);
-                    }
-                }
-            }
-
-            int maxCount = entry.getValue().values().stream().mapToInt(List::size).max().orElse(0);
-            boolean hasSaved = false;
-            for (var keyEntry : entry.getValue().entrySet()) {
-                if (keyEntry.getValue().size() < maxCount) {
-                    logger.logf(LogMessage.DEBUG, "Missing %d records for sequence %d from key %s",
-                            maxCount - keyEntry.getValue().size(), entry.getKey(), keyEntry.getKey());
-                } else {
-                    // Yes, this could be (else if) in one line, but it reads easier this way.
-                    // Side note: I first wrote "Yes, " and let AI fill in the rest, and it filled it in as:
-                    // "Yes, this is a hack." <- absolutely brutal by AI, it thinks my code is hacky... damn.
-                    if (!hasSaved) {
-                        output.addAll(keyEntry.getValue());
-                        hasSaved = true;
-                    }
-                }
-            }
-
-        }
-
-        return output;
-    }
-
-    private Map<Long, Map<String, List<Schema>>> sortRecords(Map<String, List<Schema>> entries) {
-        Map<Long, Map<String, List<Schema>>> records = new LinkedHashMap<>();
+        // Find the collector with the most records
+        String winningCollector = null;
+        int maxRecords = -1;
         for (var entry : entries.entrySet()) {
-            for (Schema schema : entry.getValue()) {
-                records.computeIfAbsent(schema.getSequenceNumber(), k -> new LinkedHashMap<>()).computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).add(schema);
+            if (entry.getValue().size() > maxRecords) {
+                maxRecords = entry.getValue().size();
+                winningCollector = entry.getKey();
             }
         }
-        return records;
+
+        // Log differences for other collectors (only when there's actually a difference)
+        for (var entry : entries.entrySet()) {
+            if (!entry.getKey().equals(winningCollector)) {
+                int missing = maxRecords - entry.getValue().size();
+                if (missing > 0) {
+                    logger.logf(LogMessage.DEBUG, "Collector %s has %d fewer records than %s (%d vs %d)",
+                            entry.getKey(), missing, winningCollector, entry.getValue().size(), maxRecords);
+                }
+            }
+        }
+
+        return new ArrayList<>(entries.get(winningCollector));
     }
 }
 

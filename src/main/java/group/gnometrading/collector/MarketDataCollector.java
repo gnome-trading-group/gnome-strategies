@@ -2,6 +2,7 @@ package group.gnometrading.collector;
 
 import com.github.luben.zstd.ZstdOutputStream;
 import com.lmax.disruptor.EventHandler;
+import group.gnometrading.annotations.VisibleForTesting;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.concurrent.CountDownLatch;
 
 public class MarketDataCollector implements EventHandler<Schema>, Closeable {
 
@@ -30,7 +32,9 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
     private final ByteArrayOutputStream rawBuffer;
     private ZstdOutputStream outputStream;
 
-    private volatile boolean closed = false;
+    private volatile boolean closed;
+    private volatile boolean shutdownRequested;
+    private final CountDownLatch cycleFlippedLatch;
 
     public MarketDataCollector(
             Logger logger,
@@ -46,6 +50,10 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         this.bucketName = bucketName;
         this.purgatory = new ExpandableArrayBuffer(1 << 12);
         this.rawBuffer = new ByteArrayOutputStream();
+
+        this.closed = false;
+        this.shutdownRequested = false;
+        this.cycleFlippedLatch = new CountDownLatch(1);
 
         LocalDateTime cycleStart = LocalDateTime.now(clock).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
         this.entry = new MarketDataEntry(this.listing, cycleStart, MarketDataEntry.EntryType.RAW);
@@ -68,9 +76,13 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
             LocalDateTime nextCycleStart = now.truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
             logger.logf(LogMessage.DEBUG, "Switching cycle to %s from %s", nextCycleStart, this.entry.getTimestamp());
             this.uploadFile();
-
             this.entry = new MarketDataEntry(this.listing, nextCycleStart, MarketDataEntry.EntryType.RAW);
             this.openNewStream();
+
+            if (shutdownRequested) {
+                cycleFlippedLatch.countDown();
+                return;
+            }
         }
 
         try {
@@ -109,12 +121,20 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
     private void attachShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                this.logger.logf(LogMessage.DEBUG, "Market data collector is exiting... attempting to cycle files.");
-                this.close();
+                this.waitForCycleAndClose();
             } catch (Exception e) {
                 this.logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to cycle files: %s", e.getMessage());
             }
         }));
+    }
+
+    @VisibleForTesting
+    void waitForCycleAndClose() throws IOException, InterruptedException {
+        logger.logf(LogMessage.DEBUG, "Shutdown requested, waiting for cycle to flip before closing");
+        shutdownRequested = true;
+        cycleFlippedLatch.await();
+        logger.logf(LogMessage.DEBUG, "Cycle flipped, proceeding with close");
+        this.close();
     }
 
     @Override
@@ -126,7 +146,8 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
 
         closed = true;
 
-        this.uploadFile();
+        this.rawBuffer.close();
+        this.outputStream.close();
 
         logger.logf(LogMessage.DEBUG, "MarketDataCollector closed successfully");
     }

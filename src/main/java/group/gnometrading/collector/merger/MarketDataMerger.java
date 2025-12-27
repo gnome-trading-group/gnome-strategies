@@ -10,6 +10,7 @@ import group.gnometrading.sm.Listing;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.S3Error;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.io.IOException;
 import java.time.Clock;
@@ -139,10 +140,14 @@ public class MarketDataMerger {
      * @return a map of merged entries to the list of raw entries that make up the merged entry
      */
     private Map<MarketDataEntry, List<MarketDataEntry>> collectRawFiles() {
-        var paginator = this.s3Client.listObjectsV2Paginator(request -> request.bucket(this.inputBucket));
+        var paginator = this.s3Client.listObjectsV2Paginator(request -> request.bucket(this.inputBucket))
+                .stream()
+                .flatMap(response -> response.contents().stream())
+                .sorted(Comparator.comparing(S3Object::key))
+                .toList();
         Map<MarketDataEntry, List<MarketDataEntry>> outputFiles = new LinkedHashMap<>();
 
-        for (var s3Object : paginator.contents()) {
+        for (var s3Object : paginator) {
             MarketDataEntry entry = MarketDataEntry.fromKey(s3Object.key());
             assert entry.getEntryType() == MarketDataEntry.EntryType.RAW : "Expected raw entry, got " + entry.getEntryType();
 

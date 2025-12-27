@@ -282,23 +282,6 @@ class MarketDataCollectorTest {
     }
 
     @Test
-    void testCloseUploadsCurrentFile() throws Exception {
-        date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
-
-        // Add some data with timestamps
-        collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 0, 10), 0, false);
-        collector.onEvent(bufWithTimestamp("data2", 2025, 4, 1, 12, 0, 20), 1, false);
-
-        // Close the collector
-        collector.close();
-
-        // Verify the file was uploaded
-        verify(s3Client, times(1)).putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
-    }
-
-
-    @Test
     void testOutOfOrderTimestampsDoNotTriggerRotation() throws Exception {
         // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
@@ -350,6 +333,38 @@ class MarketDataCollectorTest {
         assertTrue(decompressed.contains("aaaaaaaa"), "Should contain first event data");
         assertTrue(decompressed.contains("bbbbbbbb"), "Should contain second event data");
         assertTrue(decompressed.contains("cccccccc"), "Should contain third event data");
+    }
+
+    @Test
+    void testWaitForCycleAndCloseWaitsUntilCycleFlips() throws Exception {
+        // Start at 12:00:00
+        date(2025, 4, 1, 12, 0, 0);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+
+        // Add some data in the first minute
+        collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 0, 10), 0, false);
+
+        // Start waitForCycleAndClose in a separate thread - it should block until cycle flips
+        Thread shutdownThread = new Thread(() -> {
+            try {
+                collector.waitForCycleAndClose();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        shutdownThread.start();
+
+        Thread.sleep(50);
+
+        assertTrue(shutdownThread.isAlive(), "Shutdown thread should still be waiting for cycle to flip");
+
+        // Now send an event that triggers a cycle flip (timestamp in next minute)
+        collector.onEvent(bufWithTimestamp("data2", 2025, 4, 1, 12, 1, 5), 1, false);
+
+        shutdownThread.join(5000);
+        assertFalse(shutdownThread.isAlive(), "Shutdown thread should have completed after cycle flip");
+
+        verify(s3Client, times(1)).putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
     }
 
     private Schema bufWithTimestamp(String input, int year, int month, int day, int hour, int minute, int second) {
