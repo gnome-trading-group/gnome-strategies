@@ -73,7 +73,7 @@ public class MarketDataTransformer {
                 .tableName(tableName)
                 .key(
                         Map.of(
-                                "listingId", AttributeValue.builder().s(String.valueOf(listing.listingId())).build(),
+                                "listingId", AttributeValue.builder().n(String.valueOf(listing.listingId())).build(),
                                 "schemaType", AttributeValue.builder().s(toSchemaType.getIdentifier()).build()
                         )
                 )

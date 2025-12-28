@@ -65,7 +65,7 @@ class MarketDataCollectorTest {
     void testNoUploadWithinSameMinute() throws Exception {
         // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add events with timestamps within the same minute (12:00:xx)
         // All these events have timestamps < minuteStart + 1 minute, so no rotation
@@ -88,7 +88,7 @@ class MarketDataCollectorTest {
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add event with timestamp 12:00:30
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 30), 0, false);
@@ -131,7 +131,7 @@ class MarketDataCollectorTest {
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add event with timestamp 12:00:30
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 30), 0, false);
@@ -154,7 +154,7 @@ class MarketDataCollectorTest {
     void testOneSecondBeforeMinuteBoundaryDoesNotRotate() throws Exception {
         // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add event with timestamp 12:00:30
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 30), 0, false);
@@ -171,7 +171,7 @@ class MarketDataCollectorTest {
     void testCollectorStartsAtNonZeroSecond() throws Exception {
         // Start at 12:00:55 (55 seconds into the minute)
         date(2025, 4, 1, 12, 0, 55);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
         // minuteStart will be truncated to 12:00:00
 
         // Add event with timestamp 12:00:58
@@ -189,7 +189,7 @@ class MarketDataCollectorTest {
     void testEmptyBufferStillUploads() throws Exception {
         // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add empty event with timestamp in next minute
         collector.onEvent(bufWithTimestamp("", 2025, 4, 1, 12, 1, 1), 0, false);
@@ -208,7 +208,7 @@ class MarketDataCollectorTest {
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
         // minuteStart will be truncated to 12:34:00
 
         // Add data with timestamp 12:34:58
@@ -244,7 +244,7 @@ class MarketDataCollectorTest {
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add data with timestamps in first minute
         collector.onEvent(bufWithTimestamp("data0", 2025, 4, 1, 12, 0, 10), 0, false);
@@ -285,7 +285,7 @@ class MarketDataCollectorTest {
     void testOutOfOrderTimestampsDoNotTriggerRotation() throws Exception {
         // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add event with timestamp 12:01:30 (future)
         collector.onEvent(bufWithTimestamp("future", 2025, 4, 1, 12, 1, 30), 0, false);
@@ -314,7 +314,7 @@ class MarketDataCollectorTest {
                 });
 
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add data with timestamps
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 10), 0, false);
@@ -339,7 +339,7 @@ class MarketDataCollectorTest {
     void testWaitForCycleAndCloseWaitsUntilCycleFlips() throws Exception {
         // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET);
+        MarketDataCollector collector = new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
 
         // Add some data in the first minute
         collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 0, 10), 0, false);

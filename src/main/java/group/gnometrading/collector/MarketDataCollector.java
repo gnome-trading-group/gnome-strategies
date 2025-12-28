@@ -43,6 +43,18 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
             Listing listing,
             String bucketName
     ) {
+        this(logger, clock, s3Client, listing, bucketName, true);
+    }
+
+    @VisibleForTesting
+    MarketDataCollector(
+            Logger logger,
+            Clock clock,
+            S3Client s3Client,
+            Listing listing,
+            String bucketName,
+            boolean attachShutdownHook
+    ) {
         this.logger = logger;
         this.clock = clock;
         this.s3Client = s3Client;
@@ -58,7 +70,9 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
         LocalDateTime cycleStart = LocalDateTime.now(clock).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
         this.entry = new MarketDataEntry(this.listing, cycleStart, MarketDataEntry.EntryType.RAW);
         this.openNewStream();
-        this.attachShutdownHook();
+        if (attachShutdownHook) {
+            this.attachShutdownHook();
+        }
     }
 
     public void onEvent(final Schema schema, long sequence, boolean endOfBatch) throws Exception {
