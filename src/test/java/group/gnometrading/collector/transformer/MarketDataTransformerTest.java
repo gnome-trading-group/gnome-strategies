@@ -30,6 +30,7 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -202,7 +203,7 @@ class MarketDataTransformerTest {
      */
     private void setupDynamoDbNoTimestamp() {
         GetItemResponse response = GetItemResponse.builder().item(Map.of()).build();
-        lenient().when(dynamoDbClient.getItem(any(Consumer.class))).thenReturn(response);
+        lenient().when(dynamoDbClient.getItem(any(GetItemRequest.class))).thenReturn(response);
     }
 
     /**
@@ -212,7 +213,7 @@ class MarketDataTransformerTest {
         GetItemResponse response = GetItemResponse.builder()
             .item(Map.of("nextAggregationTimestamp", AttributeValue.builder().s(timestamp.toString()).build()))
             .build();
-        when(dynamoDbClient.getItem(any(Consumer.class))).thenReturn(response);
+        when(dynamoDbClient.getItem(any(GetItemRequest.class))).thenReturn(response);
     }
 
     /**

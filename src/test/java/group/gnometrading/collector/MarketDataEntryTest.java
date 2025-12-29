@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -632,6 +631,31 @@ class MarketDataEntryTest {
         assertEquals(14, entries.get(0).getTimestamp().getDayOfMonth());
         assertEquals(15, entries.get(1).getTimestamp().getDayOfMonth());
         assertEquals(16, entries.get(2).getTimestamp().getDayOfMonth());
+    }
+
+    @Test
+    void testFiltersBySchemaType() {
+        // Given: A listing and S3 with keys from multiple days
+        Listing testListing = listing(532, 151, SchemaType.MBP_10);
+        String bucket = "test-bucket";
+
+        // Create keys from different days
+        S3Object obj1 = S3Object.builder().key("532/151/2025/4/14/10/30/mbp-10.zst").build();
+        S3Object obj2 = S3Object.builder().key("532/151/2025/4/15/14/30/mbp-1.zst").build();
+        S3Object obj3 = S3Object.builder().key("532/151/2025/4/16/16/45/mbp-10.zst").build();
+
+        ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
+        SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2, obj3).iterator();
+        when(mockIterable.contents()).thenReturn(contents);
+        when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
+
+        // When: Getting all keys for a listing
+        List<MarketDataEntry> entries = MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing);
+
+        // Then: All entries from all days are returned and sorted
+        assertEquals(2, entries.size());
+        assertEquals(14, entries.get(0).getTimestamp().getDayOfMonth());
+        assertEquals(16, entries.get(1).getTimestamp().getDayOfMonth());
     }
 
     @Test

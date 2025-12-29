@@ -234,6 +234,7 @@ public class MarketDataEntry {
                 .map(S3Object::key)
                 .map(MarketDataEntry::fromKey)
                 .sorted(Comparator.comparing(MarketDataEntry::getTimestamp))
+                .filter(entry -> entry.getSchemaType() == listing.exchange().schemaType())
                 .collect(Collectors.toList());
     }
 
