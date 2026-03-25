@@ -1,13 +1,24 @@
 package group.gnometrading.collector;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
 import com.github.luben.zstd.ZstdInputStream;
 import com.github.luben.zstd.ZstdOutputStream;
-import group.gnometrading.schemas.MBP10Schema;
+import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
 import group.gnometrading.sm.Security;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -24,19 +35,6 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.time.LocalDateTime;
-import java.util.*;
-import java.util.function.Consumer;
-import java.util.stream.Stream;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class MarketDataEntryTest {
@@ -57,23 +55,31 @@ class MarketDataEntryTest {
                 new Exchange(exchangeId, "test-exchange", "test-region", schemaType),
                 new Security(securityId, "test-security", 1),
                 "test-symbol",
-                "test-name"
-        );
+                "test-name");
     }
 
     /**
      * Helper to create a MarketDataEntry with specific parameters.
      */
-    private MarketDataEntry entry(int securityId, int exchangeId, LocalDateTime timestamp,
-                                   MarketDataEntry.EntryType type, SchemaType schemaType) {
+    private MarketDataEntry entry(
+            int securityId,
+            int exchangeId,
+            LocalDateTime timestamp,
+            MarketDataEntry.EntryType type,
+            SchemaType schemaType) {
         return new MarketDataEntry(listing(securityId, exchangeId, schemaType), timestamp, type);
     }
 
     /**
      * Helper to create a MarketDataEntry with a specific UUID.
      */
-    private MarketDataEntry entryWithUuid(int securityId, int exchangeId, LocalDateTime timestamp,
-                                          MarketDataEntry.EntryType type, SchemaType schemaType, String uuid) {
+    private MarketDataEntry entryWithUuid(
+            int securityId,
+            int exchangeId,
+            LocalDateTime timestamp,
+            MarketDataEntry.EntryType type,
+            SchemaType schemaType,
+            String uuid) {
         return new MarketDataEntry(listing(securityId, exchangeId, schemaType), timestamp, type, uuid);
     }
 
@@ -83,29 +89,88 @@ class MarketDataEntryTest {
 
     static Stream<Arguments> keyGenerationTestCases() {
         return Stream.of(
-            // Aggregated entries
-            Arguments.of(532, 151, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.AGGREGATED, null,
-                "532/151/2025/4/15/14/30/mbp-10.zst"),
-            Arguments.of(999, 888, 2024, 12, 25, 23, 59, SchemaType.MBO, MarketDataEntry.EntryType.AGGREGATED, null,
-                "999/888/2024/12/25/23/59/mbo.zst"),
-            Arguments.of(1, 1, 2025, 1, 1, 12, 0, SchemaType.OHLCV_1H, MarketDataEntry.EntryType.AGGREGATED, null,
-                "1/1/2025/1/1/12/0/ohlcv-1h.zst"),
-            // Raw entries with UUID
-            Arguments.of(532, 151, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.RAW, "abc12345",
-                "532/151/2025/4/15/14/30/mbp-10/abc12345.zst"),
-            Arguments.of(999999, 888888, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.RAW, "xyz98765",
-                "999999/888888/2025/4/15/14/30/mbp-10/xyz98765.zst")
-        );
+                // Aggregated entries
+                Arguments.of(
+                        532,
+                        151,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        SchemaType.MBP_10,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null,
+                        "532/151/2025/4/15/14/30/mbp-10.zst"),
+                Arguments.of(
+                        999,
+                        888,
+                        2024,
+                        12,
+                        25,
+                        23,
+                        59,
+                        SchemaType.MBO,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null,
+                        "999/888/2024/12/25/23/59/mbo.zst"),
+                Arguments.of(
+                        1,
+                        1,
+                        2025,
+                        1,
+                        1,
+                        12,
+                        0,
+                        SchemaType.OHLCV_1H,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null,
+                        "1/1/2025/1/1/12/0/ohlcv-1h.zst"),
+                // Raw entries with UUID
+                Arguments.of(
+                        532,
+                        151,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        SchemaType.MBP_10,
+                        MarketDataEntry.EntryType.RAW,
+                        "abc12345",
+                        "532/151/2025/4/15/14/30/mbp-10/abc12345.zst"),
+                Arguments.of(
+                        999999,
+                        888888,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        SchemaType.MBP_10,
+                        MarketDataEntry.EntryType.RAW,
+                        "xyz98765",
+                        "999999/888888/2025/4/15/14/30/mbp-10/xyz98765.zst"));
     }
 
     @ParameterizedTest
     @MethodSource("keyGenerationTestCases")
-    void testGetKeyGeneration(int securityId, int exchangeId, int year, int month, int day, int hour, int minute,
-                               SchemaType schemaType, MarketDataEntry.EntryType entryType, String uuid, String expectedKey) {
+    void testGetKeyGeneration(
+            int securityId,
+            int exchangeId,
+            int year,
+            int month,
+            int day,
+            int hour,
+            int minute,
+            SchemaType schemaType,
+            MarketDataEntry.EntryType entryType,
+            String uuid,
+            String expectedKey) {
         LocalDateTime timestamp = LocalDateTime.of(year, month, day, hour, minute);
         MarketDataEntry entry = uuid != null
-            ? entryWithUuid(securityId, exchangeId, timestamp, entryType, schemaType, uuid)
-            : entry(securityId, exchangeId, timestamp, entryType, schemaType);
+                ? entryWithUuid(securityId, exchangeId, timestamp, entryType, schemaType, uuid)
+                : entry(securityId, exchangeId, timestamp, entryType, schemaType);
 
         assertEquals(expectedKey, entry.getKey());
     }
@@ -116,33 +181,113 @@ class MarketDataEntryTest {
 
     static Stream<Arguments> keyParsingTestCases() {
         return Stream.of(
-            // Aggregated keys
-            Arguments.of("532/151/2025/4/15/14/30/mbp-10.zst", 532, 151, 2025, 4, 15, 14, 30,
-                MarketDataEntry.EntryType.AGGREGATED, null),
-            Arguments.of("999/888/2024/12/25/23/59/mbo.zst", 999, 888, 2024, 12, 25, 23, 59,
-                MarketDataEntry.EntryType.AGGREGATED, null),
-            // Edge case timestamps
-            Arguments.of("532/151/2025/1/1/0/0/mbp-10.zst", 532, 151, 2025, 1, 1, 0, 0,
-                MarketDataEntry.EntryType.AGGREGATED, null),
-            Arguments.of("532/151/2025/4/15/23/59/mbp-10.zst", 532, 151, 2025, 4, 15, 23, 59,
-                MarketDataEntry.EntryType.AGGREGATED, null),
-            Arguments.of("532/151/2025/1/5/14/30/mbp-10.zst", 532, 151, 2025, 1, 5, 14, 30,
-                MarketDataEntry.EntryType.AGGREGATED, null),
-            // Raw keys with UUID
-            Arguments.of("532/151/2025/4/15/14/30/mbp-10/abc12345.zst", 532, 151, 2025, 4, 15, 14, 30,
-                MarketDataEntry.EntryType.RAW, "abc12345"),
-            Arguments.of("532/151/2025/4/15/14/30/mbp-10/12345678.zst", 532, 151, 2025, 4, 15, 14, 30,
-                MarketDataEntry.EntryType.RAW, "12345678"),
-            // Large IDs
-            Arguments.of("999999/888888/2025/4/15/14/30/mbp-10.zst", 999999, 888888, 2025, 4, 15, 14, 30,
-                MarketDataEntry.EntryType.AGGREGATED, null)
-        );
+                // Aggregated keys
+                Arguments.of(
+                        "532/151/2025/4/15/14/30/mbp-10.zst",
+                        532,
+                        151,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null),
+                Arguments.of(
+                        "999/888/2024/12/25/23/59/mbo.zst",
+                        999,
+                        888,
+                        2024,
+                        12,
+                        25,
+                        23,
+                        59,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null),
+                // Edge case timestamps
+                Arguments.of(
+                        "532/151/2025/1/1/0/0/mbp-10.zst",
+                        532,
+                        151,
+                        2025,
+                        1,
+                        1,
+                        0,
+                        0,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null),
+                Arguments.of(
+                        "532/151/2025/4/15/23/59/mbp-10.zst",
+                        532,
+                        151,
+                        2025,
+                        4,
+                        15,
+                        23,
+                        59,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null),
+                Arguments.of(
+                        "532/151/2025/1/5/14/30/mbp-10.zst",
+                        532,
+                        151,
+                        2025,
+                        1,
+                        5,
+                        14,
+                        30,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null),
+                // Raw keys with UUID
+                Arguments.of(
+                        "532/151/2025/4/15/14/30/mbp-10/abc12345.zst",
+                        532,
+                        151,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        MarketDataEntry.EntryType.RAW,
+                        "abc12345"),
+                Arguments.of(
+                        "532/151/2025/4/15/14/30/mbp-10/12345678.zst",
+                        532,
+                        151,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        MarketDataEntry.EntryType.RAW,
+                        "12345678"),
+                // Large IDs
+                Arguments.of(
+                        "999999/888888/2025/4/15/14/30/mbp-10.zst",
+                        999999,
+                        888888,
+                        2025,
+                        4,
+                        15,
+                        14,
+                        30,
+                        MarketDataEntry.EntryType.AGGREGATED,
+                        null));
     }
 
     @ParameterizedTest
     @MethodSource("keyParsingTestCases")
-    void testFromKeyParsing(String key, int securityId, int exchangeId, int year, int month, int day,
-                            int hour, int minute, MarketDataEntry.EntryType expectedType, String expectedUuid) {
+    void testFromKeyParsing(
+            String key,
+            int securityId,
+            int exchangeId,
+            int year,
+            int month,
+            int day,
+            int hour,
+            int minute,
+            MarketDataEntry.EntryType expectedType,
+            String expectedUuid) {
         MarketDataEntry entry = MarketDataEntry.fromKey(key);
 
         assertEquals(securityId, entry.getSecurityId());
@@ -154,7 +299,7 @@ class MarketDataEntryTest {
         assertEquals(minute, entry.getTimestamp().getMinute());
         assertEquals(expectedType, entry.getEntryType());
         if (expectedUuid != null) {
-            assertEquals(expectedUuid, entry.getUUID());
+            assertEquals(expectedUuid, entry.getUuid());
         }
     }
 
@@ -170,21 +315,31 @@ class MarketDataEntryTest {
 
     static Stream<Arguments> roundTripTestCases() {
         return Stream.of(
-            Arguments.of(999, 888, 2025, 6, 20, 9, 45, SchemaType.MBO, MarketDataEntry.EntryType.AGGREGATED, null),
-            Arguments.of(532, 151, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.AGGREGATED, null),
-            Arguments.of(999, 888, 2025, 6, 20, 9, 45, SchemaType.MBO, MarketDataEntry.EntryType.RAW, "xyz98765"),
-            Arguments.of(532, 151, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.RAW, "abc12345")
-        );
+                Arguments.of(999, 888, 2025, 6, 20, 9, 45, SchemaType.MBO, MarketDataEntry.EntryType.AGGREGATED, null),
+                Arguments.of(
+                        532, 151, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.AGGREGATED, null),
+                Arguments.of(999, 888, 2025, 6, 20, 9, 45, SchemaType.MBO, MarketDataEntry.EntryType.RAW, "xyz98765"),
+                Arguments.of(
+                        532, 151, 2025, 4, 15, 14, 30, SchemaType.MBP_10, MarketDataEntry.EntryType.RAW, "abc12345"));
     }
 
     @ParameterizedTest
     @MethodSource("roundTripTestCases")
-    void testFromKeyRoundTrip(int securityId, int exchangeId, int year, int month, int day, int hour, int minute,
-                               SchemaType schemaType, MarketDataEntry.EntryType entryType, String uuid) {
+    void testFromKeyRoundTrip(
+            int securityId,
+            int exchangeId,
+            int year,
+            int month,
+            int day,
+            int hour,
+            int minute,
+            SchemaType schemaType,
+            MarketDataEntry.EntryType entryType,
+            String uuid) {
         LocalDateTime timestamp = LocalDateTime.of(year, month, day, hour, minute);
         MarketDataEntry original = uuid != null
-            ? entryWithUuid(securityId, exchangeId, timestamp, entryType, schemaType, uuid)
-            : entry(securityId, exchangeId, timestamp, entryType, schemaType);
+                ? entryWithUuid(securityId, exchangeId, timestamp, entryType, schemaType, uuid)
+                : entry(securityId, exchangeId, timestamp, entryType, schemaType);
 
         String key = original.getKey();
         MarketDataEntry parsed = MarketDataEntry.fromKey(key);
@@ -195,7 +350,7 @@ class MarketDataEntryTest {
         assertEquals(original.getTimestamp(), parsed.getTimestamp());
         assertEquals(original.getEntryType(), parsed.getEntryType());
         if (uuid != null) {
-            assertEquals(original.getUUID(), parsed.getUUID());
+            assertEquals(original.getUuid(), parsed.getUuid());
         }
     }
 
@@ -228,7 +383,7 @@ class MarketDataEntryTest {
         // Then: Entry is correctly parsed with UUID and schema type
         assertEquals(MarketDataEntry.EntryType.RAW, entry.getEntryType());
         assertEquals(SchemaType.MBP_10, entry.getSchemaType());
-        assertEquals("abc12345", entry.getUUID());
+        assertEquals("abc12345", entry.getUuid());
         assertEquals(2025, entry.getTimestamp().getYear());
         assertEquals(4, entry.getTimestamp().getMonthValue());
         assertEquals(15, entry.getTimestamp().getDayOfMonth());
@@ -246,13 +401,13 @@ class MarketDataEntryTest {
         String bucket = "test-bucket";
 
         ArgumentCaptor<Consumer<software.amazon.awssdk.services.s3.model.PutObjectRequest.Builder>> requestCaptor =
-            ArgumentCaptor.forClass(Consumer.class);
+                ArgumentCaptor.forClass(Consumer.class);
         when(s3Client.putObject(requestCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
         entry.saveToS3(s3Client, bucket, testData);
 
         software.amazon.awssdk.services.s3.model.PutObjectRequest.Builder builder =
-            software.amazon.awssdk.services.s3.model.PutObjectRequest.builder();
+                software.amazon.awssdk.services.s3.model.PutObjectRequest.builder();
         requestCaptor.getValue().accept(builder);
         software.amazon.awssdk.services.s3.model.PutObjectRequest request = builder.build();
 
@@ -268,8 +423,8 @@ class MarketDataEntryTest {
         String bucket = "test-bucket";
 
         // Create schemas with specific sequence numbers
-        MBP10Schema schema1 = (MBP10Schema) SchemaType.MBP_10.newInstance();
-        MBP10Schema schema2 = (MBP10Schema) SchemaType.MBP_10.newInstance();
+        Mbp10Schema schema1 = (Mbp10Schema) SchemaType.MBP_10.newInstance();
+        Mbp10Schema schema2 = (Mbp10Schema) SchemaType.MBP_10.newInstance();
         schema1.encoder.sequence(100);
         schema2.encoder.sequence(101);
         List<Schema> schemas = List.of(schema1, schema2);
@@ -288,7 +443,7 @@ class MarketDataEntryTest {
 
         // Decompress and verify
         try (ZstdInputStream zstdStream = new ZstdInputStream(new ByteArrayInputStream(uploadedBytes));
-             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
             zstdStream.transferTo(buffer);
             byte[] decompressedData = buffer.toByteArray();
 
@@ -305,7 +460,7 @@ class MarketDataEntryTest {
         MarketDataEntry entry = entry(532, 151, timestamp, MarketDataEntry.EntryType.AGGREGATED, SchemaType.MBP_10);
         String bucket = "test-bucket";
 
-        MBP10Schema schema = (MBP10Schema) SchemaType.MBP_10.newInstance();
+        Mbp10Schema schema = (Mbp10Schema) SchemaType.MBP_10.newInstance();
         schema.encoder.sequence(12345);
         List<Schema> schemas = List.of(schema);
 
@@ -317,14 +472,15 @@ class MarketDataEntryTest {
         entry.saveToS3(s3Client, bucket, schemas);
 
         // Then: Decompress and verify the sequence number is preserved
-        byte[] uploadedBytes = bodyCaptor.getValue().contentStreamProvider().newStream().readAllBytes();
+        byte[] uploadedBytes =
+                bodyCaptor.getValue().contentStreamProvider().newStream().readAllBytes();
         try (ZstdInputStream zstdStream = new ZstdInputStream(new ByteArrayInputStream(uploadedBytes));
-             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
             zstdStream.transferTo(buffer);
             byte[] decompressedData = buffer.toByteArray();
 
             // Create a new schema and load the data into it
-            MBP10Schema loadedSchema = (MBP10Schema) SchemaType.MBP_10.newInstance();
+            Mbp10Schema loadedSchema = (Mbp10Schema) SchemaType.MBP_10.newInstance();
             loadedSchema.buffer.putBytes(0, decompressedData, 0, decompressedData.length);
 
             assertEquals(12345, loadedSchema.getSequenceNumber());
@@ -354,10 +510,9 @@ class MarketDataEntryTest {
         }
         byte[] compressedData = compressedOutput.toByteArray();
 
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation -> new ResponseInputStream<>(
-               GetObjectResponse.builder().build(),
-               new ByteArrayInputStream(compressedData)
-       ));
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         // When: Loading from S3
         List<Schema> schemas = entry.loadFromS3(s3Client, bucket);
@@ -371,7 +526,8 @@ class MarketDataEntryTest {
     void testLoadFromS3UsesCorrectKey() throws IOException {
         // Given: An entry with specific parameters
         LocalDateTime timestamp = LocalDateTime.of(2025, 4, 15, 14, 30);
-        MarketDataEntry entry = entryWithUuid(532, 151, timestamp, MarketDataEntry.EntryType.RAW, SchemaType.MBP_10, "abc12345");
+        MarketDataEntry entry =
+                entryWithUuid(532, 151, timestamp, MarketDataEntry.EntryType.RAW, SchemaType.MBP_10, "abc12345");
         String bucket = "test-bucket";
 
         // Create minimal compressed data
@@ -383,19 +539,18 @@ class MarketDataEntryTest {
         }
         byte[] compressedData = compressedOutput.toByteArray();
 
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation -> new ResponseInputStream<>(
-                GetObjectResponse.builder().build(),
-                new ByteArrayInputStream(compressedData)
-        ));
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         entry.loadFromS3(s3Client, bucket);
 
         ArgumentCaptor<Consumer<software.amazon.awssdk.services.s3.model.GetObjectRequest.Builder>> captor =
-            ArgumentCaptor.forClass(Consumer.class);
+                ArgumentCaptor.forClass(Consumer.class);
         verify(s3Client).getObject(captor.capture());
 
         software.amazon.awssdk.services.s3.model.GetObjectRequest.Builder builder =
-            software.amazon.awssdk.services.s3.model.GetObjectRequest.builder();
+                software.amazon.awssdk.services.s3.model.GetObjectRequest.builder();
         captor.getValue().accept(builder);
         software.amazon.awssdk.services.s3.model.GetObjectRequest request = builder.build();
 
@@ -455,10 +610,9 @@ class MarketDataEntryTest {
         }
         byte[] compressedData = compressedOutput.toByteArray();
 
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation -> new ResponseInputStream<>(
-                GetObjectResponse.builder().build(),
-                new ByteArrayInputStream(compressedData)
-        ));
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         // When: Loading from S3
         List<Schema> schemas = entry.loadFromS3(s3Client, bucket);
@@ -467,8 +621,6 @@ class MarketDataEntryTest {
         assertEquals(3, schemas.size());
         verify(s3Client).getObject(any(Consumer.class));
     }
-
-
 
     // ============================================================================
     // FETCH KEYS FROM S3 TESTS
@@ -481,7 +633,8 @@ class MarketDataEntryTest {
         LocalDateTime day = LocalDateTime.of(2025, 4, 15, 0, 0);
         String bucket = "test-bucket";
 
-        S3Object obj = S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
+        S3Object obj =
+                S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Collections.singletonList(obj).iterator();
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
@@ -504,9 +657,12 @@ class MarketDataEntryTest {
         String bucket = "test-bucket";
 
         // Create keys in non-sorted order to test sorting
-        S3Object obj1 = S3Object.builder().key("532/151/2025/4/15/16/45/mbp-10.zst").build();
-        S3Object obj2 = S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
-        S3Object obj3 = S3Object.builder().key("532/151/2025/4/15/14/00/mbp-10.zst").build();
+        S3Object obj1 =
+                S3Object.builder().key("532/151/2025/4/15/16/45/mbp-10.zst").build();
+        S3Object obj2 =
+                S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
+        S3Object obj3 =
+                S3Object.builder().key("532/151/2025/4/15/14/00/mbp-10.zst").build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2, obj3).iterator();
@@ -549,7 +705,8 @@ class MarketDataEntryTest {
         LocalDateTime day = LocalDateTime.of(2025, 4, 15, 0, 0);
         String bucket = "test-bucket";
 
-        S3Object obj = S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
+        S3Object obj =
+                S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Collections.singletonList(obj).iterator();
         when(mockIterable.contents()).thenReturn(contents);
@@ -560,11 +717,11 @@ class MarketDataEntryTest {
 
         // Then: S3 is called with correct prefix (security/exchange/year/month/day/)
         ArgumentCaptor<Consumer<software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder>> captor =
-            ArgumentCaptor.forClass(Consumer.class);
+                ArgumentCaptor.forClass(Consumer.class);
         verify(s3Client).listObjectsV2Paginator(captor.capture());
 
         software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder builder =
-            software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
+                software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
         captor.getValue().accept(builder);
         software.amazon.awssdk.services.s3.model.ListObjectsV2Request request = builder.build();
 
@@ -591,18 +748,19 @@ class MarketDataEntryTest {
 
         // Then: Different prefixes are used
         ArgumentCaptor<Consumer<software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder>> captor =
-            ArgumentCaptor.forClass(Consumer.class);
+                ArgumentCaptor.forClass(Consumer.class);
         verify(s3Client, times(2)).listObjectsV2Paginator(captor.capture());
 
-        List<Consumer<software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder>> capturedConsumers = captor.getAllValues();
+        List<Consumer<software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder>> capturedConsumers =
+                captor.getAllValues();
 
         software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder builder1 =
-            software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
+                software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
         capturedConsumers.get(0).accept(builder1);
         assertEquals("999/888/2025/1/1/", builder1.build().prefix());
 
         software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder builder2 =
-            software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
+                software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
         capturedConsumers.get(1).accept(builder2);
         assertEquals("999/888/2025/12/31/", builder2.build().prefix());
     }
@@ -614,9 +772,12 @@ class MarketDataEntryTest {
         String bucket = "test-bucket";
 
         // Create keys from different days
-        S3Object obj1 = S3Object.builder().key("532/151/2025/4/14/10/30/mbp-10.zst").build();
-        S3Object obj2 = S3Object.builder().key("532/151/2025/4/15/14/30/mbp-10.zst").build();
-        S3Object obj3 = S3Object.builder().key("532/151/2025/4/16/16/45/mbp-10.zst").build();
+        S3Object obj1 =
+                S3Object.builder().key("532/151/2025/4/14/10/30/mbp-10.zst").build();
+        S3Object obj2 =
+                S3Object.builder().key("532/151/2025/4/15/14/30/mbp-10.zst").build();
+        S3Object obj3 =
+                S3Object.builder().key("532/151/2025/4/16/16/45/mbp-10.zst").build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2, obj3).iterator();
@@ -640,9 +801,12 @@ class MarketDataEntryTest {
         String bucket = "test-bucket";
 
         // Create keys from different days
-        S3Object obj1 = S3Object.builder().key("532/151/2025/4/14/10/30/mbp-10.zst").build();
-        S3Object obj2 = S3Object.builder().key("532/151/2025/4/15/14/30/mbp-1.zst").build();
-        S3Object obj3 = S3Object.builder().key("532/151/2025/4/16/16/45/mbp-10.zst").build();
+        S3Object obj1 =
+                S3Object.builder().key("532/151/2025/4/14/10/30/mbp-10.zst").build();
+        S3Object obj2 =
+                S3Object.builder().key("532/151/2025/4/15/14/30/mbp-1.zst").build();
+        S3Object obj3 =
+                S3Object.builder().key("532/151/2025/4/16/16/45/mbp-10.zst").build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Arrays.asList(obj1, obj2, obj3).iterator();
@@ -664,7 +828,8 @@ class MarketDataEntryTest {
         Listing testListing = listing(532, 151, SchemaType.MBP_10);
         String bucket = "test-bucket";
 
-        S3Object obj = S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
+        S3Object obj =
+                S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10.zst").build();
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Collections.singletonList(obj).iterator();
         when(mockIterable.contents()).thenReturn(contents);
@@ -675,11 +840,11 @@ class MarketDataEntryTest {
 
         // Then: S3 is called with correct prefix (security/exchange/ only, no date)
         ArgumentCaptor<Consumer<software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder>> captor =
-            ArgumentCaptor.forClass(Consumer.class);
+                ArgumentCaptor.forClass(Consumer.class);
         verify(s3Client).listObjectsV2Paginator(captor.capture());
 
         software.amazon.awssdk.services.s3.model.ListObjectsV2Request.Builder builder =
-            software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
+                software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder();
         captor.getValue().accept(builder);
         software.amazon.awssdk.services.s3.model.ListObjectsV2Request request = builder.build();
 
@@ -713,8 +878,11 @@ class MarketDataEntryTest {
         String bucket = "test-bucket";
 
         // Mix of raw (with UUID) and aggregated (no UUID) keys
-        S3Object rawKey = S3Object.builder().key("532/151/2025/4/15/10/30/mbp-10/abc12345.zst").build();
-        S3Object aggKey = S3Object.builder().key("532/151/2025/4/15/14/30/mbp-10.zst").build();
+        S3Object rawKey = S3Object.builder()
+                .key("532/151/2025/4/15/10/30/mbp-10/abc12345.zst")
+                .build();
+        S3Object aggKey =
+                S3Object.builder().key("532/151/2025/4/15/14/30/mbp-10.zst").build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
         SdkIterable<S3Object> contents = () -> Arrays.asList(rawKey, aggKey).iterator();
@@ -742,15 +910,16 @@ class MarketDataEntryTest {
         MarketDataEntry entry2 = entry(532, 151, timestamp, MarketDataEntry.EntryType.RAW, SchemaType.MBP_10);
 
         // When/Then: Each entry gets a unique 8-character UUID
-        assertNotEquals(entry1.getUUID(), entry2.getUUID());
-        assertEquals(8, entry1.getUUID().length());
-        assertEquals(8, entry2.getUUID().length());
+        assertNotEquals(entry1.getUuid(), entry2.getUuid());
+        assertEquals(8, entry1.getUuid().length());
+        assertEquals(8, entry2.getUuid().length());
     }
 
     @Test
     void testToString() {
         LocalDateTime timestamp = LocalDateTime.of(2025, 4, 15, 14, 30);
-        MarketDataEntry entry = entryWithUuid(532, 151, timestamp, MarketDataEntry.EntryType.RAW, SchemaType.MBP_10, "test1234");
+        MarketDataEntry entry =
+                entryWithUuid(532, 151, timestamp, MarketDataEntry.EntryType.RAW, SchemaType.MBP_10, "test1234");
 
         String str = entry.toString();
 
@@ -758,4 +927,3 @@ class MarketDataEntryTest {
         assertTrue(str.contains("test1234"));
     }
 }
-

@@ -1,43 +1,24 @@
 package group.gnometrading.collector.transformer;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
 import com.github.luben.zstd.ZstdInputStream;
 import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.collector.MarketDataEntry;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
-import group.gnometrading.schemas.MBP10Schema;
-import group.gnometrading.schemas.MBP1Schema;
+import group.gnometrading.schemas.Mbp10Schema;
+import group.gnometrading.schemas.Mbp1Schema;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.schemas.converters.SchemaConversionRegistry;
-import group.gnometrading.schemas.converters.mbp1.MBP1ToBBO1MConverter;
-import group.gnometrading.schemas.converters.mbp10.MBP10ToMBP1Converter;
+import group.gnometrading.schemas.converters.mbp1.Mbp1ToBbo1mConverter;
+import group.gnometrading.schemas.converters.mbp10.Mbp10ToMbp1Converter;
 import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
 import group.gnometrading.sm.Security;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.MockedStatic;
-import org.mockito.junit.jupiter.MockitoExtension;
-import software.amazon.awssdk.core.ResponseInputStream;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
-import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
-import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
-import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
-import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectResponse;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -49,10 +30,25 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 
 /**
  * Tests for MarketDataTransformer.
@@ -60,13 +56,12 @@ import static org.mockito.Mockito.*;
  * <p>This test uses the real SchemaConversionRegistry with actual converters:
  *
  * <ul>
- *   <li><b>MBP10ToMBP1Converter</b>: Maps 1-to-1, always returns an MBP1 schema for each MBP10 input.</li>
- *   <li><b>MBP1ToBBO1MConverter</b>: Aggregates MBP1 schemas into BBO schemas per minute.
+ *   <li><b>Mbp10ToMbp1Converter</b>: Maps 1-to-1, always returns an MBP1 schema for each MBP10 input.</li>
+ *   <li><b>Mbp1ToBbo1mConverter</b>: Aggregates MBP1 schemas into BBO schemas per minute.
  *       Returns null until a full minute has passed (i.e., when it sees an input with a timestamp
  *       in a new minute, it returns the aggregated BBO for the previous minute).</li>
  * </ul>
  */
-
 @ExtendWith(MockitoExtension.class)
 class MarketDataTransformerTest {
 
@@ -89,18 +84,8 @@ class MarketDataTransformerTest {
     @BeforeEach
     void setUp() {
         // Fixed clock: 2025-04-15 15:00:00 UTC
-        fixedClock = Clock.fixed(
-            Instant.parse("2025-04-15T15:00:00Z"),
-            ZoneId.of("UTC")
-        );
-        transformer = new MarketDataTransformer(
-            logger,
-            fixedClock,
-            s3Client,
-            dynamoDbClient,
-            tableName,
-            bucket
-        );
+        fixedClock = Clock.fixed(Instant.parse("2025-04-15T15:00:00Z"), ZoneId.of("UTC"));
+        transformer = new MarketDataTransformer(logger, fixedClock, s3Client, dynamoDbClient, tableName, bucket);
 
         // Initialize mockStatic for MarketDataEntry
         marketDataEntryMock = mockStatic(MarketDataEntry.class);
@@ -108,7 +93,9 @@ class MarketDataTransformerTest {
         // Initialize mockStatic for SchemaConversionRegistry
         schemaConversionRegistryMock = mockStatic(SchemaConversionRegistry.class);
         // By default, no converters are available
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(any(), any())).thenReturn(false);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(any(), any()))
+                .thenReturn(false);
     }
 
     @AfterEach
@@ -134,15 +121,14 @@ class MarketDataTransformerTest {
                 new Exchange(exchangeId, "test-exchange", "test-region", schemaType),
                 new Security(securityId, "test-security", 1),
                 "test-symbol",
-                "test-name"
-        );
+                "test-name");
     }
 
     /**
      * Helper to create an MBP10 schema with a specific sequence number and event timestamp.
      */
-    private MBP10Schema mbp10Schema(long sequenceNumber, long eventTimestampNanos) {
-        MBP10Schema schema = (MBP10Schema) SchemaType.MBP_10.newInstance();
+    private Mbp10Schema mbp10Schema(long sequenceNumber, long eventTimestampNanos) {
+        Mbp10Schema schema = (Mbp10Schema) SchemaType.MBP_10.newInstance();
         schema.encoder.sequence(sequenceNumber);
         schema.encoder.timestampEvent(eventTimestampNanos);
         return schema;
@@ -151,7 +137,7 @@ class MarketDataTransformerTest {
     /**
      * Helper to create an MBP10 schema with sequence number and timestamp from LocalDateTime.
      */
-    private MBP10Schema mbp10Schema(long sequenceNumber, LocalDateTime timestamp) {
+    private Mbp10Schema mbp10Schema(long sequenceNumber, LocalDateTime timestamp) {
         long epochMillis = timestamp.atZone(fixedClock.getZone()).toInstant().toEpochMilli();
         long epochNanos = TimeUnit.MILLISECONDS.toNanos(epochMillis);
         return mbp10Schema(sequenceNumber, epochNanos);
@@ -184,7 +170,7 @@ class MarketDataTransformerTest {
         int expectedSize = schemaType.getInstance().totalMessageSize();
 
         try (ZstdInputStream zstdStream = new ZstdInputStream(new ByteArrayInputStream(compressedData));
-             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
             zstdStream.transferTo(buffer);
             byte[] decompressedData = buffer.toByteArray();
 
@@ -211,8 +197,10 @@ class MarketDataTransformerTest {
      */
     private void setupDynamoDbWithTimestamp(LocalDateTime timestamp) {
         GetItemResponse response = GetItemResponse.builder()
-            .item(Map.of("nextAggregationTimestamp", AttributeValue.builder().s(timestamp.toString()).build()))
-            .build();
+                .item(Map.of(
+                        "nextAggregationTimestamp",
+                        AttributeValue.builder().s(timestamp.toString()).build()))
+                .build();
         when(dynamoDbClient.getItem(any(GetItemRequest.class))).thenReturn(response);
     }
 
@@ -221,7 +209,9 @@ class MarketDataTransformerTest {
      */
     private void setupS3PutObject() {
         PutObjectResponse putResponse = mock(PutObjectResponse.class);
-        lenient().when(s3Client.putObject(any(Consumer.class), any(RequestBody.class))).thenReturn(putResponse);
+        lenient()
+                .when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenReturn(putResponse);
     }
 
     /**
@@ -251,8 +241,12 @@ class MarketDataTransformerTest {
     }
 
     private void mockSchemaConversionRegistry() {
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_10, SchemaType.MBP_1)).thenReturn(true);
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_10, SchemaType.MBP_1)).thenAnswer(inv -> new MBP10ToMBP1Converter());
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_10, SchemaType.MBP_1))
+                .thenReturn(true);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_10, SchemaType.MBP_1))
+                .thenAnswer(inv -> new Mbp10ToMbp1Converter());
     }
 
     // ============================================================================
@@ -287,8 +281,9 @@ class MarketDataTransformerTest {
         setupDynamoDbNoTimestamp();
 
         // Mock MarketDataEntry.getAllKeysForListing to return empty list
-        marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
-            .thenReturn(List.of());
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
+                .thenReturn(List.of());
 
         // When: Running transformer
         transformer.runTransformer(Set.of(testListing));
@@ -311,8 +306,10 @@ class MarketDataTransformerTest {
         setupDynamoDbWithTimestamp(previousTimestamp);
 
         // Mock MarketDataEntry.getKeysForListingByDay to return empty list
-        marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-            .thenReturn(List.of());
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                .thenReturn(List.of());
 
         // When: Running transformer
         transformer.runTransformer(Set.of(testListing));
@@ -323,13 +320,13 @@ class MarketDataTransformerTest {
 
     // ============================================================================
     // SUCCESSFUL TRANSFORMATION TESTS (MBP10 -> MBP1)
-    // MBP10ToMBP1Converter: Maps 1-to-1, always returns an MBP1 for each MBP10 input.
+    // Mbp10ToMbp1Converter: Maps 1-to-1, always returns an MBP1 for each MBP10 input.
     // ============================================================================
 
     @Test
     void testTransformKeySuccessfulFirstRun() throws IOException {
         // Given: A listing with MBP10 data that can be converted to MBP1
-        // MBP10ToMBP1Converter maps 1-to-1, so 3 input schemas -> 3 output schemas
+        // Mbp10ToMbp1Converter maps 1-to-1, so 3 input schemas -> 3 output schemas
         Listing testListing = listing(532, 151, SchemaType.MBP_10);
         LocalDateTime schemaTimestamp = LocalDateTime.of(2025, 4, 15, 13, 30);
 
@@ -340,17 +337,18 @@ class MarketDataTransformerTest {
 
         // Create input schemas
         List<Schema> inputSchemas = List.of(
-            mbp10Schema(100L, schemaTimestamp),
-            mbp10Schema(101L, schemaTimestamp),
-            mbp10Schema(102L, schemaTimestamp)
-        );
+                mbp10Schema(100L, schemaTimestamp),
+                mbp10Schema(101L, schemaTimestamp),
+                mbp10Schema(102L, schemaTimestamp));
 
         // Create a mock MarketDataEntry that returns the compressed data
-        MarketDataEntry mockEntry = spy(new MarketDataEntry(testListing, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry mockEntry =
+                spy(new MarketDataEntry(testListing, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
         doReturn(inputSchemas).when(mockEntry).loadFromS3(s3Client, bucket);
 
-        marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
-            .thenReturn(List.of(mockEntry));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
+                .thenReturn(List.of(mockEntry));
 
         // Mock S3 putObject
         setupS3PutObject();
@@ -365,7 +363,12 @@ class MarketDataTransformerTest {
         verify(dynamoDbClient).putItem(any(PutItemRequest.class));
 
         // Verify success log
-        verify(logger).logf(eq(LogMessage.DEBUG), eq("Successfully transformed listing %s to %s"), eq(testListing), eq(SchemaType.MBP_1));
+        verify(logger)
+                .logf(
+                        eq(LogMessage.DEBUG),
+                        eq("Successfully transformed listing %s to %s"),
+                        eq(testListing),
+                        eq(SchemaType.MBP_1));
     }
 
     // ============================================================================
@@ -388,12 +391,15 @@ class MarketDataTransformerTest {
         List<Schema> inputSchemas = List.of(mbp10Schema(100L, newSchemaTimestamp));
 
         // Create a mock MarketDataEntry
-        MarketDataEntry mockEntry = spy(new MarketDataEntry(testListing, newSchemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry mockEntry =
+                spy(new MarketDataEntry(testListing, newSchemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
         doReturn(inputSchemas).when(mockEntry).loadFromS3(s3Client, bucket);
 
         // Mock getKeysForListingByDay (used when resuming)
-        marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-            .thenReturn(List.of(mockEntry));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                .thenReturn(List.of(mockEntry));
 
         // Mock S3 putObject
         setupS3PutObject();
@@ -402,11 +408,19 @@ class MarketDataTransformerTest {
         transformer.runTransformer(Set.of(testListing));
 
         // Then: Verify getKeysForListingByDay was called (not getAllKeysForListing)
-        marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)), atLeastOnce());
+        marketDataEntryMock.verify(
+                () -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)),
+                atLeastOnce());
         marketDataEntryMock.verify(() -> MarketDataEntry.getAllKeysForListing(any(), any(), any()), never());
 
         // Verify transformation completed
-        verify(logger).logf(eq(LogMessage.DEBUG), eq("Successfully transformed listing %s to %s"), eq(testListing), eq(SchemaType.MBP_1));
+        verify(logger)
+                .logf(
+                        eq(LogMessage.DEBUG),
+                        eq("Successfully transformed listing %s to %s"),
+                        eq(testListing),
+                        eq(SchemaType.MBP_1));
     }
 
     // ============================================================================
@@ -429,16 +443,20 @@ class MarketDataTransformerTest {
         List<Schema> inputSchemas1 = List.of(mbp10Schema(100L, schemaTimestamp));
         List<Schema> inputSchemas2 = List.of(mbp10Schema(200L, schemaTimestamp));
 
-        MarketDataEntry mockEntry1 = spy(new MarketDataEntry(listing1, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry mockEntry1 =
+                spy(new MarketDataEntry(listing1, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
         doReturn(inputSchemas1).when(mockEntry1).loadFromS3(s3Client, bucket);
 
-        MarketDataEntry mockEntry2 = spy(new MarketDataEntry(listing2, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry mockEntry2 =
+                spy(new MarketDataEntry(listing2, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
         doReturn(inputSchemas2).when(mockEntry2).loadFromS3(s3Client, bucket);
 
-        marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, listing1))
-            .thenReturn(List.of(mockEntry1));
-        marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, listing2))
-            .thenReturn(List.of(mockEntry2));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, listing1))
+                .thenReturn(List.of(mockEntry1));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, listing2))
+                .thenReturn(List.of(mockEntry2));
 
         // Mock S3 putObject
         setupS3PutObject();
@@ -454,7 +472,7 @@ class MarketDataTransformerTest {
 
     // ============================================================================
     // GROUPING BY ENTRY TESTS
-    // MBP10ToMBP1Converter: Maps 1-to-1, so 4 input schemas -> 4 output schemas
+    // Mbp10ToMbp1Converter: Maps 1-to-1, so 4 input schemas -> 4 output schemas
     // grouped by minute (2 per minute -> 2 S3 puts for MBP_1)
     // With real registry, multiple converters may produce output.
     // ============================================================================
@@ -466,26 +484,31 @@ class MarketDataTransformerTest {
         LocalDateTime minute1 = LocalDateTime.of(2025, 4, 15, 13, 30);
         LocalDateTime minute2 = LocalDateTime.of(2025, 4, 15, 13, 31);
 
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_10, SchemaType.MBP_1)).thenReturn(true);
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_10, SchemaType.MBP_1)).thenAnswer(inv -> new MBP10ToMBP1Converter());
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_10, SchemaType.MBP_1))
+                .thenReturn(true);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_10, SchemaType.MBP_1))
+                .thenAnswer(inv -> new Mbp10ToMbp1Converter());
 
         // Mock DynamoDB - no previous timestamp
         setupDynamoDbNoTimestamp();
 
         // Create input schemas spanning two minutes
-        // MBP10ToMBP1Converter maps 1-to-1, so all 4 schemas will produce output
+        // Mbp10ToMbp1Converter maps 1-to-1, so all 4 schemas will produce output
         List<Schema> inputSchemas = List.of(
-            mbp10Schema(100L, minute1),
-            mbp10Schema(101L, minute1),
-            mbp10Schema(102L, minute2),
-            mbp10Schema(103L, minute2)
-        );
+                mbp10Schema(100L, minute1),
+                mbp10Schema(101L, minute1),
+                mbp10Schema(102L, minute2),
+                mbp10Schema(103L, minute2));
 
-        MarketDataEntry mockEntry = spy(new MarketDataEntry(testListing, minute1, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry mockEntry =
+                spy(new MarketDataEntry(testListing, minute1, MarketDataEntry.EntryType.AGGREGATED));
         doReturn(inputSchemas).when(mockEntry).loadFromS3(s3Client, bucket);
 
-        marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
-            .thenReturn(List.of(mockEntry));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
+                .thenReturn(List.of(mockEntry));
 
         // Mock S3 putObject
         setupS3PutObject();
@@ -516,15 +539,17 @@ class MarketDataTransformerTest {
         // Create input schemas
         List<Schema> inputSchemas = List.of(mbp10Schema(100L, schemaTimestamp));
 
-        MarketDataEntry mockEntry = spy(new MarketDataEntry(testListing, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry mockEntry =
+                spy(new MarketDataEntry(testListing, schemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
         doReturn(inputSchemas).when(mockEntry).loadFromS3(s3Client, bucket);
 
-        marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
-            .thenReturn(List.of(mockEntry));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
+                .thenReturn(List.of(mockEntry));
 
         // Mock S3 putObject to throw exception
         when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
-            .thenThrow(new RuntimeException("S3 error"));
+                .thenThrow(new RuntimeException("S3 error"));
 
         // When/Then: Exception is thrown
         assertThrows(RuntimeException.class, () -> transformer.runTransformer(Set.of(testListing)));
@@ -548,15 +573,19 @@ class MarketDataTransformerTest {
         setupDynamoDbWithTimestamp(previousTimestamp);
 
         // Create entries - one old (should be filtered), one new (should be processed)
-        MarketDataEntry oldEntry = spy(new MarketDataEntry(testListing, oldSchemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
-        MarketDataEntry newEntry = spy(new MarketDataEntry(testListing, newSchemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry oldEntry =
+                spy(new MarketDataEntry(testListing, oldSchemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry newEntry =
+                spy(new MarketDataEntry(testListing, newSchemaTimestamp, MarketDataEntry.EntryType.AGGREGATED));
 
         List<Schema> newSchemas = List.of(mbp10Schema(100L, newSchemaTimestamp));
         doReturn(newSchemas).when(newEntry).loadFromS3(s3Client, bucket);
 
         // Mock getKeysForListingByDay to return both entries (filtering happens in transformer)
-        marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-            .thenReturn(List.of(oldEntry, newEntry));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                .thenReturn(List.of(oldEntry, newEntry));
 
         // Mock S3 putObject
         setupS3PutObject();
@@ -570,9 +599,9 @@ class MarketDataTransformerTest {
     }
 
     // ============================================================================
-    // MBP1ToBBO1MConverter MINUTE BOUNDARY TESTS (via Transformer)
+    // Mbp1ToBbo1mConverter MINUTE BOUNDARY TESTS (via Transformer)
     // ============================================================================
-    // The MBP1ToBBO1MConverter aggregates MBP1 schemas into BBO schemas per minute.
+    // The Mbp1ToBbo1mConverter aggregates MBP1 schemas into BBO schemas per minute.
     // It returns null until a full minute has passed (i.e., when it sees an input
     // with a timestamp in a new minute, it returns the aggregated BBO for the
     // previous minute).
@@ -586,8 +615,8 @@ class MarketDataTransformerTest {
     /**
      * Helper to create an MBP1 schema with a specific sequence number and event timestamp in nanos.
      */
-    private MBP1Schema mbp1Schema(long sequenceNumber, long eventTimestampNanos) {
-        MBP1Schema schema = (MBP1Schema) SchemaType.MBP_1.newInstance();
+    private Mbp1Schema mbp1Schema(long sequenceNumber, long eventTimestampNanos) {
+        Mbp1Schema schema = (Mbp1Schema) SchemaType.MBP_1.newInstance();
         schema.encoder.sequence(sequenceNumber);
         schema.encoder.timestampEvent(eventTimestampNanos);
         return schema;
@@ -596,7 +625,7 @@ class MarketDataTransformerTest {
     /**
      * Helper to create an MBP1 schema with sequence number and timestamp from LocalDateTime.
      */
-    private MBP1Schema mbp1Schema(long sequenceNumber, LocalDateTime timestamp) {
+    private Mbp1Schema mbp1Schema(long sequenceNumber, LocalDateTime timestamp) {
         long epochMillis = timestamp.atZone(fixedClock.getZone()).toInstant().toEpochMilli();
         long epochNanos = TimeUnit.MILLISECONDS.toNanos(epochMillis);
         return mbp1Schema(sequenceNumber, epochNanos);
@@ -608,13 +637,14 @@ class MarketDataTransformerTest {
     @SuppressWarnings("unchecked")
     private List<String> captureS3Keys() {
         ArgumentCaptor<Consumer<software.amazon.awssdk.services.s3.model.PutObjectRequest.Builder>> captor =
-            ArgumentCaptor.forClass(Consumer.class);
+                ArgumentCaptor.forClass(Consumer.class);
         verify(s3Client, atLeastOnce()).putObject(captor.capture(), any(RequestBody.class));
 
         List<String> keys = new ArrayList<>();
-        for (Consumer<software.amazon.awssdk.services.s3.model.PutObjectRequest.Builder> consumer : captor.getAllValues()) {
+        for (Consumer<software.amazon.awssdk.services.s3.model.PutObjectRequest.Builder> consumer :
+                captor.getAllValues()) {
             software.amazon.awssdk.services.s3.model.PutObjectRequest.Builder builder =
-                software.amazon.awssdk.services.s3.model.PutObjectRequest.builder();
+                    software.amazon.awssdk.services.s3.model.PutObjectRequest.builder();
             consumer.accept(builder);
             keys.add(builder.build().key());
         }
@@ -622,7 +652,7 @@ class MarketDataTransformerTest {
     }
 
     /**
-     * Test case record for MBP1ToBBO1MConverter parameterized tests.
+     * Test case record for Mbp1ToBbo1mConverter parameterized tests.
      *
      * @param description Human-readable test name
      * @param nextAggregationTimestamp The timestamp saved in DynamoDB (null for first run)
@@ -631,12 +661,11 @@ class MarketDataTransformerTest {
      * @param expectedNextAggregationTimestamp Expected nextAggregationTimestamp after transformation (null if no update)
      */
     record MBP1ToBBO1MTestCase(
-        String description,
-        LocalDateTime nextAggregationTimestamp,
-        List<int[]> s3KeyTimestamps,  // Each int[] is {minuteOffset, schemaMinuteOffset1, schemaMinuteOffset2, ...}
-        int expectedS3SaveCount,
-        LocalDateTime expectedNextAggregationTimestamp
-    ) {
+            String description,
+            LocalDateTime nextAggregationTimestamp,
+            List<int[]> s3KeyTimestamps, // Each int[] is {minuteOffset, schemaMinuteOffset1, schemaMinuteOffset2, ...}
+            int expectedS3SaveCount,
+            LocalDateTime expectedNextAggregationTimestamp) {
         @Override
         public String toString() {
             return description;
@@ -647,83 +676,79 @@ class MarketDataTransformerTest {
 
     static Stream<Arguments> mbp1ToBbo1mTransformerTestCases() {
         return Stream.of(
-            // First run (no nextAggregationTimestamp), single key with schemas in one minute - no output
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "First run, single minute - no output",
-                null,
-                List.of(new int[]{0, 0, 0}),  // Key at minute 0, schemas at minute 0
-                0,
-                null
-            )),
+                // First run (no nextAggregationTimestamp), single key with schemas in one minute - no output
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "First run, single minute - no output",
+                        null,
+                        List.of(new int[] {0, 0, 0}), // Key at minute 0, schemas at minute 0
+                        0,
+                        null)),
 
-            // First run, schemas crossing one minute boundary - 1 output
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "First run, cross one boundary - 1 output",
-                null,
-                List.of(new int[]{0, 0, 1}),  // Key at minute 0, schemas at minutes 0 and 1
-                1,
-                BASE_TIME.plusMinutes(1)
-            )),
+                // First run, schemas crossing one minute boundary - 1 output
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "First run, cross one boundary - 1 output",
+                        null,
+                        List.of(new int[] {0, 0, 1}), // Key at minute 0, schemas at minutes 0 and 1
+                        1,
+                        BASE_TIME.plusMinutes(1))),
 
-            // First run, schemas crossing two minute boundaries - 2 outputs
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "First run, cross two boundaries - 2 outputs",
-                null,
-                List.of(new int[]{0, 0, 1, 2}),  // Key at minute 0, schemas at minutes 0, 1, 2
-                2,
-                BASE_TIME.plusMinutes(2)
-            )),
+                // First run, schemas crossing two minute boundaries - 2 outputs
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "First run, cross two boundaries - 2 outputs",
+                        null,
+                        List.of(new int[] {0, 0, 1, 2}), // Key at minute 0, schemas at minutes 0, 1, 2
+                        2,
+                        BASE_TIME.plusMinutes(2))),
 
-            // First run, multiple keys spanning multiple minutes
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "First run, multiple keys - 3 outputs",
-                null,
-                List.of(
-                    new int[]{0, 0, 1},      // Key at minute 0, schemas at 0, 1
-                    new int[]{2, 2, 3}       // Key at minute 2, schemas at 2, 3
-                ),
-                3,  // Outputs at minutes 0, 1, 2
-                BASE_TIME.plusMinutes(3)
-            )),
+                // First run, multiple keys spanning multiple minutes
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "First run, multiple keys - 3 outputs",
+                        null,
+                        List.of(
+                                new int[] {0, 0, 1}, // Key at minute 0, schemas at 0, 1
+                                new int[] {2, 2, 3} // Key at minute 2, schemas at 2, 3
+                                ),
+                        3, // Outputs at minutes 0, 1, 2
+                        BASE_TIME.plusMinutes(3))),
 
-            // Resume from previous timestamp, schemas after that timestamp
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "Resume, schemas after timestamp - 1 output",
-                BASE_TIME,  // Resume from minute 0
-                List.of(new int[]{0, 0, 1}),  // Key at minute 0, schemas at 0, 1
-                1,
-                BASE_TIME.plusMinutes(1)
-            )),
+                // Resume from previous timestamp, schemas after that timestamp
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "Resume, schemas after timestamp - 1 output",
+                        BASE_TIME, // Resume from minute 0
+                        List.of(new int[] {0, 0, 1}), // Key at minute 0, schemas at 0, 1
+                        1,
+                        BASE_TIME.plusMinutes(1))),
 
-            // Resume from previous timestamp, no new minute boundaries crossed
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "Resume, no new boundaries - no output",
-                BASE_TIME,
-                List.of(new int[]{0, 0, 0}),  // Key at minute 0, schemas all at minute 0
-                0,
-                null
-            )),
+                // Resume from previous timestamp, no new minute boundaries crossed
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "Resume, no new boundaries - no output",
+                        BASE_TIME,
+                        List.of(new int[] {0, 0, 0}), // Key at minute 0, schemas all at minute 0
+                        0,
+                        null)),
 
-            // Resume with large gap
-            Arguments.of(new MBP1ToBBO1MTestCase(
-                "Resume, large gap - 1 output",
-                BASE_TIME,
-                List.of(new int[]{0, 0, 10}),  // Key at minute 0, schemas at 0 and 10
-                1,
-                BASE_TIME.plusMinutes(10)
-            ))
-        );
+                // Resume with large gap
+                Arguments.of(new MBP1ToBBO1MTestCase(
+                        "Resume, large gap - 1 output",
+                        BASE_TIME,
+                        List.of(new int[] {0, 0, 10}), // Key at minute 0, schemas at 0 and 10
+                        1,
+                        BASE_TIME.plusMinutes(10))));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("mbp1ToBbo1mTransformerTestCases")
-    void testMBP1ToBBO1MConverterViaTransformer(MBP1ToBBO1MTestCase testCase) throws IOException {
+    void testMbp1ToBbo1mConverterViaTransformer(MBP1ToBBO1MTestCase testCase) throws IOException {
         // Given: An MBP1 listing
         Listing testListing = listing(532, 151, SchemaType.MBP_1);
 
-        // Setup SchemaConversionRegistry to return a fresh MBP1ToBBO1MConverter each time
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenReturn(true);
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenAnswer(inv -> new MBP1ToBBO1MConverter());
+        // Setup SchemaConversionRegistry to return a fresh Mbp1ToBbo1mConverter each time
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenReturn(true);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenAnswer(inv -> new Mbp1ToBbo1mConverter());
 
         // Setup DynamoDB mock based on nextAggregationTimestamp
         if (testCase.nextAggregationTimestamp() == null) {
@@ -736,7 +761,8 @@ class MarketDataTransformerTest {
         List<MarketDataEntry> mockEntries = new ArrayList<>();
         for (int[] keyData : testCase.s3KeyTimestamps()) {
             LocalDateTime keyTimestamp = BASE_TIME.plusMinutes(keyData[0]);
-            MarketDataEntry mockEntry = spy(new MarketDataEntry(testListing, keyTimestamp, MarketDataEntry.EntryType.AGGREGATED));
+            MarketDataEntry mockEntry =
+                    spy(new MarketDataEntry(testListing, keyTimestamp, MarketDataEntry.EntryType.AGGREGATED));
 
             // Create schemas for this key
             List<Schema> schemas = new ArrayList<>();
@@ -751,12 +777,15 @@ class MarketDataTransformerTest {
         // Mock the appropriate method based on whether we're resuming or not
         if (testCase.nextAggregationTimestamp() == null) {
             // First run - uses getAllKeysForListing
-            marketDataEntryMock.when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
-                .thenReturn(mockEntries);
+            marketDataEntryMock
+                    .when(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing))
+                    .thenReturn(mockEntries);
         } else {
             // Resume - uses getKeysForListingByDay (called by getKeysForListingIteratively)
-            marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-                .thenReturn(mockEntries);
+            marketDataEntryMock
+                    .when(() -> MarketDataEntry.getKeysForListingByDay(
+                            eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                    .thenReturn(mockEntries);
         }
 
         // Mock S3 putObject
@@ -769,7 +798,10 @@ class MarketDataTransformerTest {
         if (testCase.nextAggregationTimestamp() == null) {
             marketDataEntryMock.verify(() -> MarketDataEntry.getAllKeysForListing(s3Client, bucket, testListing));
         } else {
-            marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)), atLeastOnce());
+            marketDataEntryMock.verify(
+                    () -> MarketDataEntry.getKeysForListingByDay(
+                            eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)),
+                    atLeastOnce());
         }
 
         // Verify S3 saves
@@ -777,11 +809,9 @@ class MarketDataTransformerTest {
             verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
         } else {
             List<String> s3Keys = captureS3Keys();
-            List<String> bbo1mKeys = s3Keys.stream()
-                .filter(key -> key.contains("bbo-1m"))
-                .toList();
-            assertEquals(testCase.expectedS3SaveCount(), bbo1mKeys.size(),
-                "S3 key count mismatch. Keys: " + bbo1mKeys);
+            List<String> bbo1mKeys =
+                    s3Keys.stream().filter(key -> key.contains("bbo-1m")).toList();
+            assertEquals(testCase.expectedS3SaveCount(), bbo1mKeys.size(), "S3 key count mismatch. Keys: " + bbo1mKeys);
         }
 
         // Verify DynamoDB update
@@ -793,8 +823,8 @@ class MarketDataTransformerTest {
 
             // Find the BBO_1M update
             List<PutItemRequest> bbo1mUpdates = dynamoCaptor.getAllValues().stream()
-                .filter(req -> req.item().get("schemaType").s().equals("bbo-1m"))
-                .toList();
+                    .filter(req -> req.item().get("schemaType").s().equals("bbo-1m"))
+                    .toList();
 
             assertFalse(bbo1mUpdates.isEmpty(), "Expected DynamoDB update for bbo-1m");
 
@@ -821,26 +851,32 @@ class MarketDataTransformerTest {
         LocalDateTime resumeTimestamp = LocalDateTime.of(2025, 4, 13, 10, 30);
 
         // Setup SchemaConversionRegistry
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenReturn(true);
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenAnswer(inv -> new MBP1ToBBO1MConverter());
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenReturn(true);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenAnswer(inv -> new Mbp1ToBbo1mConverter());
 
         // Setup DynamoDB to return the resume timestamp
         setupDynamoDbWithTimestamp(resumeTimestamp);
 
         // Setup getKeysForListingByDay to return empty lists (we just want to verify the calls)
-        marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-            .thenReturn(List.of());
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                .thenReturn(List.of());
 
         // When
         transformer.runTransformer(Set.of(testListing));
 
         // Then: Verify getKeysForListingByDay was called for each day
         marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(
-            s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 13, 0, 0)));
+                s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 13, 0, 0)));
         marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(
-            s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 14, 0, 0)));
+                s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 14, 0, 0)));
         marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(
-            s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 15, 0, 0)));
+                s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 15, 0, 0)));
 
         // Verify getAllKeysForListing was NOT called (since we're resuming)
         marketDataEntryMock.verify(() -> MarketDataEntry.getAllKeysForListing(any(), any(), any()), never());
@@ -856,26 +892,34 @@ class MarketDataTransformerTest {
         LocalDateTime resumeTimestamp = LocalDateTime.of(2025, 4, 15, 10, 30);
 
         // Setup SchemaConversionRegistry
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenReturn(true);
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenAnswer(inv -> new MBP1ToBBO1MConverter());
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenReturn(true);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenAnswer(inv -> new Mbp1ToBbo1mConverter());
 
         // Setup DynamoDB to return the resume timestamp
         setupDynamoDbWithTimestamp(resumeTimestamp);
 
         // Setup getKeysForListingByDay to return empty lists
-        marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-            .thenReturn(List.of());
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                .thenReturn(List.of());
 
         // When
         transformer.runTransformer(Set.of(testListing));
 
         // Then: Verify getKeysForListingByDay was called only for today
         marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(
-            s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 15, 0, 0)));
+                s3Client, bucket, testListing, LocalDateTime.of(2025, 4, 15, 0, 0)));
 
         // Verify it was called exactly once
-        marketDataEntryMock.verify(() -> MarketDataEntry.getKeysForListingByDay(
-            eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)), times(1));
+        marketDataEntryMock.verify(
+                () -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)),
+                times(1));
     }
 
     @Test
@@ -889,24 +933,37 @@ class MarketDataTransformerTest {
         LocalDateTime resumeTimestamp = LocalDateTime.of(2025, 4, 15, 13, 30);
 
         // Setup SchemaConversionRegistry
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenReturn(true);
-        schemaConversionRegistryMock.when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M)).thenAnswer(inv -> new MBP1ToBBO1MConverter());
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.hasConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenReturn(true);
+        schemaConversionRegistryMock
+                .when(() -> SchemaConversionRegistry.getConverter(SchemaType.MBP_1, SchemaType.BBO_1M))
+                .thenAnswer(inv -> new Mbp1ToBbo1mConverter());
 
         // Setup DynamoDB to return the resume timestamp
         setupDynamoDbWithTimestamp(resumeTimestamp);
 
         // Create mock entries - one before, one at, one after the resume timestamp
-        MarketDataEntry entryBefore = spy(new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.AGGREGATED));
-        MarketDataEntry entryAt = spy(new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 30), MarketDataEntry.EntryType.AGGREGATED));
-        MarketDataEntry entryAfter = spy(new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 14, 0), MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry entryBefore = spy(new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry entryAt = spy(new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 30), MarketDataEntry.EntryType.AGGREGATED));
+        MarketDataEntry entryAfter = spy(new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 14, 0), MarketDataEntry.EntryType.AGGREGATED));
 
         // Setup loadFromS3 to return schemas - only entryAt and entryAfter should be loaded
-        doReturn(List.of(mbp1Schema(0, LocalDateTime.of(2025, 4, 15, 13, 30)))).when(entryAt).loadFromS3(any(), any());
-        doReturn(List.of(mbp1Schema(1, LocalDateTime.of(2025, 4, 15, 14, 0)))).when(entryAfter).loadFromS3(any(), any());
+        doReturn(List.of(mbp1Schema(0, LocalDateTime.of(2025, 4, 15, 13, 30))))
+                .when(entryAt)
+                .loadFromS3(any(), any());
+        doReturn(List.of(mbp1Schema(1, LocalDateTime.of(2025, 4, 15, 14, 0))))
+                .when(entryAfter)
+                .loadFromS3(any(), any());
 
         // Setup getKeysForListingByDay to return all three entries
-        marketDataEntryMock.when(() -> MarketDataEntry.getKeysForListingByDay(eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
-            .thenReturn(List.of(entryBefore, entryAt, entryAfter));
+        marketDataEntryMock
+                .when(() -> MarketDataEntry.getKeysForListingByDay(
+                        eq(s3Client), eq(bucket), eq(testListing), any(LocalDateTime.class)))
+                .thenReturn(List.of(entryBefore, entryAt, entryAfter));
 
         // When
         transformer.runTransformer(Set.of(testListing));

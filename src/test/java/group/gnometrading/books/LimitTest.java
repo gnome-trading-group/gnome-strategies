@@ -1,12 +1,11 @@
 package group.gnometrading.books;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.HashMap;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 class LimitTest {
 
@@ -32,7 +31,6 @@ class LimitTest {
         Order o2 = createOrder(100);
         limit.addOrder(o2);
         assertLimit(limit, "100->50");
-
 
         Order o3 = createOrder(200);
         limit.addOrder(o3);
@@ -66,7 +64,6 @@ class LimitTest {
         }
         int totalShares = 0;
         assertEquals(parts.length, limit.orders);
-
 
         // Assert head and tail
         if (parts.length > 0) {
@@ -111,5 +108,4 @@ class LimitTest {
         orderMap.put(size, order);
         return order;
     }
-
 }

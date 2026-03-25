@@ -1,17 +1,32 @@
 package group.gnometrading.collector.merger;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mockStatic;
+
 import com.github.luben.zstd.ZstdInputStream;
 import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.SecurityMaster;
 import group.gnometrading.collector.MarketDataEntry;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
-import group.gnometrading.schemas.MBP10Schema;
+import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
 import group.gnometrading.sm.Security;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,22 +40,6 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.*;
-import java.util.function.Consumer;
-import java.util.stream.Stream;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-import static org.mockito.Mockito.mockStatic;
 
 @ExtendWith(MockitoExtension.class)
 class MarketDataMergerTest {
@@ -64,19 +63,9 @@ class MarketDataMergerTest {
     @BeforeEach
     void setUp() {
         // Fixed clock: 2025-04-15 15:00:00 UTC
-        fixedClock = Clock.fixed(
-            Instant.parse("2025-04-15T15:00:00Z"),
-            ZoneId.of("UTC")
-        );
+        fixedClock = Clock.fixed(Instant.parse("2025-04-15T15:00:00Z"), ZoneId.of("UTC"));
         merger = new MarketDataMerger(
-            logger,
-            fixedClock,
-            s3Client,
-            securityMaster,
-            inputBucket,
-            outputBucket,
-            archiveBucket
-        );
+                logger, fixedClock, s3Client, securityMaster, inputBucket, outputBucket, archiveBucket);
 
         // Initialize mockStatic for MarketDataEntry
         marketDataEntryMock = mockStatic(MarketDataEntry.class);
@@ -99,15 +88,14 @@ class MarketDataMergerTest {
                 new Exchange(exchangeId, "test-exchange", "test-region", schemaType),
                 new Security(securityId, "test-security", 1),
                 "test-symbol",
-                "test-name"
-        );
+                "test-name");
     }
 
     /**
      * Helper to create a schema with a specific sequence number.
      */
     private Schema schema(long sequenceNumber) {
-        MBP10Schema schema = (MBP10Schema) SchemaType.MBP_10.newInstance();
+        Mbp10Schema schema = (Mbp10Schema) SchemaType.MBP_10.newInstance();
         schema.encoder.sequence(sequenceNumber);
         return schema;
     }
@@ -140,7 +128,7 @@ class MarketDataMergerTest {
         int expectedSize = schemaType.getInstance().totalMessageSize();
 
         try (ZstdInputStream zstdStream = new ZstdInputStream(new ByteArrayInputStream(compressedData));
-             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
             zstdStream.transferTo(buffer);
             byte[] decompressedData = buffer.toByteArray();
 
@@ -179,7 +167,12 @@ class MarketDataMergerTest {
         verify(s3Client, atLeastOnce()).putObject(any(Consumer.class), bodyCaptor.capture());
         try {
             // Return the first captured value
-            return bodyCaptor.getAllValues().get(0).contentStreamProvider().newStream().readAllBytes();
+            return bodyCaptor
+                    .getAllValues()
+                    .get(0)
+                    .contentStreamProvider()
+                    .newStream()
+                    .readAllBytes();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -232,7 +225,9 @@ class MarketDataMergerTest {
     void testRunMergerWithNoRawFiles() {
         // Given: S3 has no raw files
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response emptyResponse = ListObjectsV2Response.builder().contents(Collections.emptyList()).build();
+        ListObjectsV2Response emptyResponse = ListObjectsV2Response.builder()
+                .contents(Collections.emptyList())
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(emptyResponse));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
@@ -260,14 +255,16 @@ class MarketDataMergerTest {
         S3Object recentObj = S3Object.builder().key(recentKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(recentObj)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Collections.singletonList(recentObj))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock MarketDataEntry.fromKey to return a raw entry from 14:00
-        MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 14, 0), MarketDataEntry.EntryType.RAW);
-        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(recentKey))
-            .thenReturn(rawEntry);
+        MarketDataEntry rawEntry =
+                new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 14, 0), MarketDataEntry.EntryType.RAW);
+        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(recentKey)).thenReturn(rawEntry);
 
         // When: Running merger
         Set<Listing> result = merger.runMerger();
@@ -291,7 +288,9 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Collections.singletonList(rawObj))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
@@ -299,18 +298,18 @@ class MarketDataMergerTest {
         when(securityMaster.getListing(151, 532)).thenReturn(testListing);
 
         // Mock MarketDataEntry.fromKey
-        MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
-        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey))
-            .thenReturn(rawEntry);
+        MarketDataEntry rawEntry = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
+        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey)).thenReturn(rawEntry);
 
         // Create input schemas
         List<Schema> inputSchemas = List.of(schema(100L), schema(101L), schema(102L));
         byte[] compressedData = compressSchemas(inputSchemas);
 
         // Mock S3 getObject to return compressed data
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation ->
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData))
-        );
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         // Mock successful S3 operations
         setupSuccessfulS3Operations();
@@ -323,7 +322,7 @@ class MarketDataMergerTest {
         assertTrue(result.contains(testListing));
 
         // Verify the merged content matches what the merge strategy would produce
-        MBP10MergeStrategy strategy = new MBP10MergeStrategy();
+        Mbp10MergeStrategy strategy = new Mbp10MergeStrategy();
         Map<String, List<Schema>> strategyInput = new LinkedHashMap<>();
         strategyInput.put("uuid1234", inputSchemas);
         List<Schema> expectedOutput = strategy.mergeRecords(logger, strategyInput);
@@ -334,7 +333,9 @@ class MarketDataMergerTest {
 
         assertEquals(expectedOutput.size(), uploadedSchemas.size());
         for (int i = 0; i < expectedOutput.size(); i++) {
-            assertEquals(expectedOutput.get(i).getSequenceNumber(), uploadedSchemas.get(i).getSequenceNumber());
+            assertEquals(
+                    expectedOutput.get(i).getSequenceNumber(),
+                    uploadedSchemas.get(i).getSequenceNumber());
         }
     }
 
@@ -348,13 +349,17 @@ class MarketDataMergerTest {
         S3Object obj2 = S3Object.builder().key(key2).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Arrays.asList(obj1, obj2)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Arrays.asList(obj1, obj2))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock MarketDataEntry.fromKey for both keys
-        MarketDataEntry rawEntry1 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
-        MarketDataEntry rawEntry2 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid2222");
+        MarketDataEntry rawEntry1 = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
+        MarketDataEntry rawEntry2 = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid2222");
         marketDataEntryMock.when(() -> MarketDataEntry.fromKey(key1)).thenReturn(rawEntry1);
         marketDataEntryMock.when(() -> MarketDataEntry.fromKey(key2)).thenReturn(rawEntry2);
 
@@ -374,9 +379,11 @@ class MarketDataMergerTest {
             String requestedKey = builder.build().key();
 
             if (requestedKey.equals(key1)) {
-                return new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressed1));
+                return new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressed1));
             } else {
-                return new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressed2));
+                return new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressed2));
             }
         });
 
@@ -390,7 +397,7 @@ class MarketDataMergerTest {
         assertEquals(1, result.size());
 
         // Verify the merged content matches what the merge strategy would produce
-        MBP10MergeStrategy strategy = new MBP10MergeStrategy();
+        Mbp10MergeStrategy strategy = new Mbp10MergeStrategy();
         Map<String, List<Schema>> strategyInput = new LinkedHashMap<>();
         strategyInput.put("uuid1111", schemas1);
         strategyInput.put("uuid2222", schemas2);
@@ -402,7 +409,9 @@ class MarketDataMergerTest {
 
         assertEquals(expectedOutput.size(), uploadedSchemas.size());
         for (int i = 0; i < expectedOutput.size(); i++) {
-            assertEquals(expectedOutput.get(i).getSequenceNumber(), uploadedSchemas.get(i).getSequenceNumber());
+            assertEquals(
+                    expectedOutput.get(i).getSequenceNumber(),
+                    uploadedSchemas.get(i).getSequenceNumber());
         }
     }
 
@@ -414,22 +423,24 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Collections.singletonList(rawObj))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Mock MarketDataEntry.fromKey
-        MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
-        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey))
-            .thenReturn(rawEntry);
+        MarketDataEntry rawEntry = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
+        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey)).thenReturn(rawEntry);
 
         // Create input schemas
         List<Schema> inputSchemas = List.of(schema(100L));
         byte[] compressedData = compressSchemas(inputSchemas);
 
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation ->
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData))
-        );
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         setupSuccessfulS3Operations();
 
@@ -455,20 +466,24 @@ class MarketDataMergerTest {
         S3Object obj2 = S3Object.builder().key(key2).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Arrays.asList(obj1, obj2)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Arrays.asList(obj1, obj2))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
-        MarketDataEntry rawEntry1 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
-        MarketDataEntry rawEntry2 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid2222");
+        MarketDataEntry rawEntry1 = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
+        MarketDataEntry rawEntry2 = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid2222");
         marketDataEntryMock.when(() -> MarketDataEntry.fromKey(key1)).thenReturn(rawEntry1);
         marketDataEntryMock.when(() -> MarketDataEntry.fromKey(key2)).thenReturn(rawEntry2);
 
         List<Schema> schemas = List.of(schema(100L));
         byte[] compressedData = compressSchemas(schemas);
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation ->
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData))
-        );
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         setupSuccessfulS3Operations();
 
@@ -491,20 +506,24 @@ class MarketDataMergerTest {
         S3Object obj2 = S3Object.builder().key(key2).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Arrays.asList(obj1, obj2)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Arrays.asList(obj1, obj2))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
-        MarketDataEntry rawEntry1 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
-        MarketDataEntry rawEntry2 = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid2222");
+        MarketDataEntry rawEntry1 = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1111");
+        MarketDataEntry rawEntry2 = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid2222");
         marketDataEntryMock.when(() -> MarketDataEntry.fromKey(key1)).thenReturn(rawEntry1);
         marketDataEntryMock.when(() -> MarketDataEntry.fromKey(key2)).thenReturn(rawEntry2);
 
         List<Schema> schemas = List.of(schema(100L));
         byte[] compressedData = compressSchemas(schemas);
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation ->
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData))
-        );
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         setupSuccessfulS3Operations();
 
@@ -530,16 +549,18 @@ class MarketDataMergerTest {
         S3Object oldObj = S3Object.builder().key(oldKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(oldObj)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Collections.singletonList(oldObj))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
         // Use a spy so we can mock loadFromS3 to return empty list (bypassing the schema size bug)
-        MarketDataEntry rawEntry = spy(new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234"));
+        MarketDataEntry rawEntry = spy(new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234"));
         doReturn(List.of()).when(rawEntry).loadFromS3(any(S3Client.class), anyString());
 
-        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(oldKey))
-            .thenReturn(rawEntry);
+        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(oldKey)).thenReturn(rawEntry);
 
         // When/Then: Exception is thrown for unsupported schema type
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> merger.runMerger());
@@ -554,20 +575,22 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Collections.singletonList(rawObj))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
-        MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
-        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey))
-            .thenReturn(rawEntry);
+        MarketDataEntry rawEntry = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
+        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey)).thenReturn(rawEntry);
 
         // Mock S3 getObject
         List<Schema> schemas = List.of(schema(100L));
         byte[] compressedData = compressSchemas(schemas);
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation ->
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData))
-        );
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         // Mock putObject success but copyObject failure
         PutObjectResponse putResponse = mock(PutObjectResponse.class);
@@ -590,20 +613,22 @@ class MarketDataMergerTest {
         S3Object rawObj = S3Object.builder().key(rawKey).build();
 
         ListObjectsV2Iterable mockIterable = mock(ListObjectsV2Iterable.class);
-        ListObjectsV2Response response = ListObjectsV2Response.builder().contents(Collections.singletonList(rawObj)).build();
+        ListObjectsV2Response response = ListObjectsV2Response.builder()
+                .contents(Collections.singletonList(rawObj))
+                .build();
         when(mockIterable.stream()).thenReturn(Stream.of(response));
         when(s3Client.listObjectsV2Paginator(any(Consumer.class))).thenReturn(mockIterable);
 
-        MarketDataEntry rawEntry = new MarketDataEntry(testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
-        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey))
-            .thenReturn(rawEntry);
+        MarketDataEntry rawEntry = new MarketDataEntry(
+                testListing, LocalDateTime.of(2025, 4, 15, 13, 0), MarketDataEntry.EntryType.RAW, "uuid1234");
+        marketDataEntryMock.when(() -> MarketDataEntry.fromKey(rawKey)).thenReturn(rawEntry);
 
         // Mock S3 getObject
         List<Schema> schemas = List.of(schema(100L));
         byte[] compressedData = compressSchemas(schemas);
-        when(s3Client.getObject(any(Consumer.class))).thenAnswer(invocation ->
-            new ResponseInputStream<>(GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData))
-        );
+        when(s3Client.getObject(any(Consumer.class)))
+                .thenAnswer(invocation -> new ResponseInputStream<>(
+                        GetObjectResponse.builder().build(), new ByteArrayInputStream(compressedData)));
 
         // Mock putObject and copyObject success
         PutObjectResponse putResponse = mock(PutObjectResponse.class);
@@ -617,11 +642,12 @@ class MarketDataMergerTest {
         // Mock deleteObjects failure
         DeleteObjectsResponse deleteResponse = mock(DeleteObjectsResponse.class);
         when(deleteResponse.hasErrors()).thenReturn(true);
-        when(deleteResponse.errors()).thenReturn(List.of(S3Error.builder().key(rawKey).message("Delete failed").build()));
+        when(deleteResponse.errors())
+                .thenReturn(List.of(
+                        S3Error.builder().key(rawKey).message("Delete failed").build()));
         when(s3Client.deleteObjects(any(Consumer.class))).thenReturn(deleteResponse);
 
         // When/Then: Exception is thrown on delete error
         assertThrows(RuntimeException.class, () -> merger.runMerger());
     }
 }
-

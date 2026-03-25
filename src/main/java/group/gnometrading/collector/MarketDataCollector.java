@@ -7,9 +7,6 @@ import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.sm.Listing;
-import org.agrona.ExpandableArrayBuffer;
-import software.amazon.awssdk.services.s3.S3Client;
-
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
@@ -17,8 +14,10 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
+import org.agrona.ExpandableArrayBuffer;
+import software.amazon.awssdk.services.s3.S3Client;
 
-public class MarketDataCollector implements EventHandler<Schema>, Closeable {
+public final class MarketDataCollector implements EventHandler<Schema>, Closeable {
 
     private final Logger logger;
     private final Clock clock;
@@ -36,13 +35,7 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
     private volatile boolean shutdownRequested;
     private final CountDownLatch cycleFlippedLatch;
 
-    public MarketDataCollector(
-            Logger logger,
-            Clock clock,
-            S3Client s3Client,
-            Listing listing,
-            String bucketName
-    ) {
+    public MarketDataCollector(Logger logger, Clock clock, S3Client s3Client, Listing listing, String bucketName) {
         this(logger, clock, s3Client, listing, bucketName, true);
     }
 
@@ -53,8 +46,7 @@ public class MarketDataCollector implements EventHandler<Schema>, Closeable {
             S3Client s3Client,
             Listing listing,
             String bucketName,
-            boolean attachShutdownHook
-    ) {
+            boolean attachShutdownHook) {
         this.logger = logger;
         this.clock = clock;
         this.s3Client = s3Client;

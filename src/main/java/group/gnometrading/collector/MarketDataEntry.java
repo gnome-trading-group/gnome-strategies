@@ -5,29 +5,31 @@ import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.S3Object;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
-public class MarketDataEntry {
+public final class MarketDataEntry {
 
-    private static final Pattern AGGREGATED_FILE_PATTERN = Pattern.compile(
-            "^(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/([^/]+)\\.zst$"
-    );
+    private static final Pattern AGGREGATED_FILE_PATTERN =
+            Pattern.compile("^(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/([^/]+)\\.zst$");
 
-    private static final Pattern RAW_FILE_PATTERN = Pattern.compile(
-            "^(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/([^/]+)/([^/]+)\\.zst$"
-    );
+    private static final Pattern RAW_FILE_PATTERN =
+            Pattern.compile("^(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/(\\d+)/([^/]+)/([^/]+)\\.zst$");
 
     public static final ChronoUnit CYCLE_CHRONO_UNIT = ChronoUnit.MINUTES;
 
@@ -50,8 +52,7 @@ public class MarketDataEntry {
                 listing.exchange().schemaType(),
                 timestamp,
                 entryType,
-                UUID.randomUUID().toString().substring(0, 8)
-        );
+                UUID.randomUUID().toString().substring(0, 8));
     }
 
     public MarketDataEntry(Listing listing, LocalDateTime timestamp, EntryType entryType, String uuid) {
@@ -61,15 +62,27 @@ public class MarketDataEntry {
                 listing.exchange().schemaType(),
                 timestamp,
                 entryType,
-                uuid
-        );
+                uuid);
     }
 
-    public MarketDataEntry(int securityId, int exchangeId, SchemaType schemaType, LocalDateTime timestamp, EntryType entryType) {
-        this(securityId, exchangeId, schemaType, timestamp, entryType, UUID.randomUUID().toString().substring(0, 8));
+    public MarketDataEntry(
+            int securityId, int exchangeId, SchemaType schemaType, LocalDateTime timestamp, EntryType entryType) {
+        this(
+                securityId,
+                exchangeId,
+                schemaType,
+                timestamp,
+                entryType,
+                UUID.randomUUID().toString().substring(0, 8));
     }
 
-    public MarketDataEntry(int securityId, int exchangeId, SchemaType schemaType, LocalDateTime timestamp, EntryType entryType, String uuid) {
+    public MarketDataEntry(
+            int securityId,
+            int exchangeId,
+            SchemaType schemaType,
+            LocalDateTime timestamp,
+            EntryType entryType,
+            String uuid) {
         this.securityId = securityId;
         this.exchangeId = exchangeId;
         this.schemaType = schemaType;
@@ -79,23 +92,24 @@ public class MarketDataEntry {
     }
 
     public List<Schema> loadFromS3(S3Client s3Client, String bucket) {
-        InputStream stream = s3Client.getObject(request -> request.bucket(bucket).key(this.getKey()));
+        InputStream stream =
+                s3Client.getObject(request -> request.bucket(bucket).key(this.getKey()));
         List<Schema> schemas = new ArrayList<>();
         int expectedSize = this.schemaType.getInstance().totalMessageSize();
 
         try (ZstdInputStream zstdStream = new ZstdInputStream(stream);
-             ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
             zstdStream.transferTo(buffer);
             byte[] decompressedData = buffer.toByteArray();
 
-            int i;
-            for (i = 0; i < decompressedData.length; i += expectedSize) {
-                byte[] recordData = Arrays.copyOfRange(decompressedData, i, i + expectedSize);
+            assert decompressedData.length % expectedSize == 0
+                    : "Left over bytes in key %s: %d".formatted(this.getKey(), decompressedData.length % expectedSize);
+            for (int idx = 0; idx < decompressedData.length; idx += expectedSize) {
+                byte[] recordData = Arrays.copyOfRange(decompressedData, idx, idx + expectedSize);
                 Schema schema = this.schemaType.newInstance();
                 schema.buffer.putBytes(0, recordData, 0, recordData.length);
                 schemas.add(schema);
             }
-            assert i == decompressedData.length : "Left over bytes in key %s: %d".formatted(this.getKey(), decompressedData.length - i);
             return schemas;
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -120,10 +134,7 @@ public class MarketDataEntry {
 
     public void saveToS3(S3Client s3Client, String bucket, byte[] data) {
         String key = getKey();
-        s3Client.putObject(
-                request -> request.key(key).bucket(bucket),
-                RequestBody.fromBytes(data)
-        );
+        s3Client.putObject(request -> request.key(key).bucket(bucket), RequestBody.fromBytes(data));
     }
 
     public int getSecurityId() {
@@ -146,58 +157,61 @@ public class MarketDataEntry {
         return entryType;
     }
 
-    public String getUUID() {
+    public String getUuid() {
         return uuid;
     }
 
     public String getKey() {
         return switch (entryType) {
-            case AGGREGATED -> "%d/%d/%d/%d/%d/%d/%d/%s.zst".formatted(
-                    securityId,
-                    exchangeId,
-                    timestamp.getYear(),
-                    timestamp.getMonthValue(),
-                    timestamp.getDayOfMonth(),
-                    timestamp.getHour(),
-                    timestamp.getMinute(),
-                    schemaType.getIdentifier()
-            );
-            case RAW -> "%d/%d/%d/%d/%d/%d/%d/%s/%s.zst".formatted(
-                    securityId,
-                    exchangeId,
-                    timestamp.getYear(),
-                    timestamp.getMonthValue(),
-                    timestamp.getDayOfMonth(),
-                    timestamp.getHour(),
-                    timestamp.getMinute(),
-                    schemaType.getIdentifier(),
-                    uuid
-            );
+            case AGGREGATED -> "%d/%d/%d/%d/%d/%d/%d/%s.zst"
+                    .formatted(
+                            securityId,
+                            exchangeId,
+                            timestamp.getYear(),
+                            timestamp.getMonthValue(),
+                            timestamp.getDayOfMonth(),
+                            timestamp.getHour(),
+                            timestamp.getMinute(),
+                            schemaType.getIdentifier());
+            case RAW -> "%d/%d/%d/%d/%d/%d/%d/%s/%s.zst"
+                    .formatted(
+                            securityId,
+                            exchangeId,
+                            timestamp.getYear(),
+                            timestamp.getMonthValue(),
+                            timestamp.getDayOfMonth(),
+                            timestamp.getHour(),
+                            timestamp.getMinute(),
+                            schemaType.getIdentifier(),
+                            uuid);
         };
     }
 
     @Override
     public String toString() {
-        return "MarketDataEntry{" +
-                "securityId=" + securityId +
-                ", exchangeId=" + exchangeId +
-                ", schemaType=" + schemaType +
-                ", timestamp=" + timestamp +
-                ", entryType=" + entryType +
-                ", uuid='" + uuid + '\'' +
-                '}';
+        return "MarketDataEntry{" + "securityId="
+                + securityId + ", exchangeId="
+                + exchangeId + ", schemaType="
+                + schemaType + ", timestamp="
+                + timestamp + ", entryType="
+                + entryType + ", uuid='"
+                + uuid + '\'' + '}';
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        MarketDataEntry that = (MarketDataEntry) o;
-        return securityId == that.securityId &&
-                exchangeId == that.exchangeId &&
-                schemaType == that.schemaType &&
-                Objects.equals(timestamp, that.timestamp) &&
-                entryType == that.entryType;
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (other == null || getClass() != other.getClass()) {
+            return false;
+        }
+        MarketDataEntry that = (MarketDataEntry) other;
+        return securityId == that.securityId
+                && exchangeId == that.exchangeId
+                && schemaType == that.schemaType
+                && Objects.equals(timestamp, that.timestamp)
+                && entryType == that.entryType;
     }
 
     @Override
@@ -209,27 +223,24 @@ public class MarketDataEntry {
         return getKeysForListingByDay(s3Client, bucket, listing, null);
     }
 
-    public static List<MarketDataEntry> getKeysForListingByDay(S3Client s3Client, String bucket, Listing listing, LocalDateTime day) {
+    public static List<MarketDataEntry> getKeysForListingByDay(
+            S3Client s3Client, String bucket, Listing listing, LocalDateTime day) {
         final String keyPrefix;
         if (day != null) {
-            keyPrefix = "%d/%d/%d/%d/%d/".formatted(
-                    listing.security().securityId(),
-                    listing.exchange().exchangeId(),
-                    day.getYear(),
-                    day.getMonthValue(),
-                    day.getDayOfMonth()
-            );
+            keyPrefix = "%d/%d/%d/%d/%d/"
+                    .formatted(
+                            listing.security().securityId(),
+                            listing.exchange().exchangeId(),
+                            day.getYear(),
+                            day.getMonthValue(),
+                            day.getDayOfMonth());
         } else {
-            keyPrefix = "%d/%d/".formatted(
-                    listing.security().securityId(),
-                    listing.exchange().exchangeId()
-            );
+            keyPrefix = "%d/%d/"
+                    .formatted(
+                            listing.security().securityId(), listing.exchange().exchangeId());
         }
-        var response = s3Client.listObjectsV2Paginator(request ->
-                request
-                        .bucket(bucket)
-                        .prefix(keyPrefix)
-        );
+        var response = s3Client.listObjectsV2Paginator(
+                request -> request.bucket(bucket).prefix(keyPrefix));
         return response.contents().stream()
                 .map(S3Object::key)
                 .map(MarketDataEntry::fromKey)
@@ -281,5 +292,4 @@ public class MarketDataEntry {
         int minute = Integer.parseInt(matcher.group(7));
         return LocalDateTime.of(year, month, day, hour, minute);
     }
-
 }

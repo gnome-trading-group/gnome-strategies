@@ -4,7 +4,9 @@ package group.gnometrading.books;
  * Uses red-black tree balancing over AVL trees due to updates being a more dominant flow than reads.
  * AVL trees perform better when reading from the tree.
  */
-public class BSTUtils {
+public class BstUtils {
+
+    private BstUtils() {}
 
     public static Limit insert(final Limit root, final Limit node) {
         Limit prev = null;
@@ -86,11 +88,11 @@ public class BSTUtils {
         return parent;
     }
 
-    private static Limit minimum(Limit limit) {
-        while (limit.left != null) {
-            limit = limit.left;
+    private static Limit minimum(final Limit limit) {
+        Limit current = limit;
+        while (current.left != null) {
+            current = current.left;
         }
-        return limit;
+        return current;
     }
-
 }

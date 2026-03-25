@@ -8,6 +8,21 @@ import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.schemas.converters.SchemaConversionRegistry;
 import group.gnometrading.schemas.converters.SchemaConverter;
 import group.gnometrading.sm.Listing;
+import java.io.IOException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
@@ -15,20 +30,11 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.s3.S3Client;
 
-import java.io.IOException;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
-import java.util.*;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
-
 /**
  * This class takes in the consolidated stream produced by MarketDataMerger
  * and transforms it into lower-level schemas.
  */
-public class MarketDataTransformer {
+public final class MarketDataTransformer {
 
     private final Logger logger;
     private final Clock clock;
@@ -43,8 +49,7 @@ public class MarketDataTransformer {
             S3Client s3Client,
             DynamoDbClient dynamoDbClient,
             String tableName,
-            String bucket
-    ) {
+            String bucket) {
         this.logger = logger;
         this.clock = clock;
         this.s3Client = s3Client;
@@ -63,7 +68,8 @@ public class MarketDataTransformer {
     private void transformKey(Listing listing) {
         List<SchemaType> toSchemaTypes = Arrays.stream(SchemaType.values())
                 .filter(toSchemaType -> toSchemaType != listing.exchange().schemaType())
-                .filter(toSchemaType -> SchemaConversionRegistry.hasConverter(listing.exchange().schemaType(), toSchemaType))
+                .filter(toSchemaType ->
+                        SchemaConversionRegistry.hasConverter(listing.exchange().schemaType(), toSchemaType))
                 .toList();
 
         List<LocalDateTime> aggregationTimestamps = toSchemaTypes.stream()
@@ -90,7 +96,13 @@ public class MarketDataTransformer {
                 .map(key -> Map.entry(key, key.loadFromS3(s3Client, bucket)))
                 .sequential()
                 .sorted(Comparator.comparing(entry -> entry.getKey().getTimestamp()))
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> { throw new IllegalStateException(); }, LinkedHashMap::new));
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (a, b) -> {
+                            throw new IllegalStateException();
+                        },
+                        LinkedHashMap::new));
 
         for (int i = 0; i < toSchemaTypes.size(); i++) {
             transformKey(listing, toSchemaTypes.get(i), aggregationTimestamps.get(i), schemas);
@@ -101,13 +113,14 @@ public class MarketDataTransformer {
             Listing listing,
             SchemaType toSchemaType,
             LocalDateTime nextAggregationTimestamp,
-            Map<MarketDataEntry, List<Schema>> schemas
-    ) {
+            Map<MarketDataEntry, List<Schema>> schemas) {
         logger.logf(LogMessage.DEBUG, "Transforming listing %s to %s", listing, toSchemaType);
 
         List<MarketDataEntry> keys = schemas.keySet().stream().toList();
         if (nextAggregationTimestamp != null) {
-            keys = keys.stream().filter(key -> !key.getTimestamp().isBefore(nextAggregationTimestamp)).toList();
+            keys = keys.stream()
+                    .filter(key -> !key.getTimestamp().isBefore(nextAggregationTimestamp))
+                    .toList();
         }
 
         if (keys.isEmpty()) {
@@ -115,7 +128,8 @@ public class MarketDataTransformer {
             return;
         }
 
-        SchemaConverter converter = SchemaConversionRegistry.getConverter(listing.exchange().schemaType(), toSchemaType);
+        SchemaConverter converter =
+                SchemaConversionRegistry.getConverter(listing.exchange().schemaType(), toSchemaType);
 
         Schema lastEntryTransformed = null;
         List<Schema> outputSchemas = new ArrayList<>();
@@ -154,14 +168,21 @@ public class MarketDataTransformer {
 
     private LocalDateTime getSchemaDateTime(Schema schema) {
         long epochMillis = TimeUnit.NANOSECONDS.toMillis(schema.getEventTimestamp());
-        return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), clock.getZone()).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), clock.getZone())
+                .truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
     }
 
-    private Map<MarketDataEntry, List<Schema>> groupSchemasByEntry(Listing listing, SchemaType toSchemaType, List<Schema> schemas) {
+    private Map<MarketDataEntry, List<Schema>> groupSchemasByEntry(
+            Listing listing, SchemaType toSchemaType, List<Schema> schemas) {
         Map<MarketDataEntry, List<Schema>> outputEntries = new LinkedHashMap<>();
         for (Schema schema : schemas) {
             LocalDateTime timestamp = getSchemaDateTime(schema);
-            MarketDataEntry entry = new MarketDataEntry(listing.security().securityId(), listing.exchange().exchangeId(), toSchemaType, timestamp, MarketDataEntry.EntryType.AGGREGATED);
+            MarketDataEntry entry = new MarketDataEntry(
+                    listing.security().securityId(),
+                    listing.exchange().exchangeId(),
+                    toSchemaType,
+                    timestamp,
+                    MarketDataEntry.EntryType.AGGREGATED);
             outputEntries.computeIfAbsent(entry, k -> new ArrayList<>()).add(schema);
         }
         return outputEntries;
@@ -169,28 +190,35 @@ public class MarketDataTransformer {
 
     private List<MarketDataEntry> getKeysForListingIteratively(Listing listing, LocalDateTime nextDateTime) {
         LocalDateTime currentDateTime = nextDateTime.truncatedTo(ChronoUnit.DAYS);
-        LocalDateTime endDate = LocalDateTime.now(clock).truncatedTo(ChronoUnit.DAYS).plusDays(1);
+        LocalDateTime endDate =
+                LocalDateTime.now(clock).truncatedTo(ChronoUnit.DAYS).plusDays(1);
         List<MarketDataEntry> keys = new ArrayList<>();
         while (currentDateTime.isBefore(endDate)) {
             keys.addAll(MarketDataEntry.getKeysForListingByDay(s3Client, bucket, listing, currentDateTime));
             currentDateTime = currentDateTime.plusDays(1);
         }
-        return keys.stream().filter(key -> !key.getTimestamp().isBefore(nextDateTime)).toList();
+        return keys.stream()
+                .filter(key -> !key.getTimestamp().isBefore(nextDateTime))
+                .toList();
     }
 
     private LocalDateTime getLatestAggregationTimestamp(Listing listing, SchemaType toSchemaType) {
         var request = GetItemRequest.builder()
                 .tableName(tableName)
-                .key(
-                        Map.of(
-                                "listingId", AttributeValue.builder().n(String.valueOf(listing.listingId())).build(),
-                                "schemaType", AttributeValue.builder().s(toSchemaType.getIdentifier()).build()
-                        )
-                )
+                .key(Map.of(
+                        "listingId",
+                                AttributeValue.builder()
+                                        .n(String.valueOf(listing.listingId()))
+                                        .build(),
+                        "schemaType",
+                                AttributeValue.builder()
+                                        .s(toSchemaType.getIdentifier())
+                                        .build()))
                 .build();
         GetItemResponse response = dynamoDbClient.getItem(request);
         if (response.hasItem() && response.item().containsKey("nextAggregationTimestamp")) {
-            return LocalDateTime.parse(response.item().get("nextAggregationTimestamp").s());
+            return LocalDateTime.parse(
+                    response.item().get("nextAggregationTimestamp").s());
         }
         return null;
     }
@@ -198,13 +226,17 @@ public class MarketDataTransformer {
     private void updateLatestAggregationTimestamp(Listing listing, SchemaType toSchemaType, LocalDateTime timestamp) {
         var request = PutItemRequest.builder()
                 .tableName(tableName)
-                .item(
-                        Map.of(
-                                "listingId", AttributeValue.builder().n(String.valueOf(listing.listingId())).build(),
-                                "schemaType", AttributeValue.builder().s(toSchemaType.getIdentifier()).build(),
-                                "nextAggregationTimestamp", AttributeValue.builder().s(timestamp.toString()).build()
-                        )
-                )
+                .item(Map.of(
+                        "listingId",
+                                AttributeValue.builder()
+                                        .n(String.valueOf(listing.listingId()))
+                                        .build(),
+                        "schemaType",
+                                AttributeValue.builder()
+                                        .s(toSchemaType.getIdentifier())
+                                        .build(),
+                        "nextAggregationTimestamp",
+                                AttributeValue.builder().s(timestamp.toString()).build()))
                 .build();
         dynamoDbClient.putItem(request);
     }

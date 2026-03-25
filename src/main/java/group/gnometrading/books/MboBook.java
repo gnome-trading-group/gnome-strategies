@@ -6,20 +6,22 @@ import group.gnometrading.collections.LongMap;
 import group.gnometrading.pools.Pool;
 import group.gnometrading.pools.PoolNode;
 import group.gnometrading.pools.SingleThreadedObjectPool;
-import group.gnometrading.schemas.MBODecoder;
+import group.gnometrading.schemas.MboDecoder;
 import group.gnometrading.schemas.Side;
 
-public class MBOBook {
+public final class MboBook {
 
-    private Limit bidTree, askTree;
-    private Limit lowestAsk, highestBid;
+    private Limit bidTree;
+    private Limit askTree;
+    private Limit lowestAsk;
+    private Limit highestBid;
 
     private final LongMap<Order> orderMap;
     private final LongMap<Limit> limitMap;
     private final Pool<Limit> limitPool;
     private final Pool<Order> orderPool;
 
-    public MBOBook() {
+    public MboBook() {
         this.orderMap = new LongHashMap<>();
         this.limitMap = new LongHashMap<>();
 
@@ -44,7 +46,7 @@ public class MBOBook {
         }
     }
 
-    public boolean apply(final MBODecoder mboDecoder) {
+    public boolean apply(final MboDecoder mboDecoder) {
         switch (mboDecoder.action()) {
             case Add -> {
                 insert(mboDecoder);
@@ -58,12 +60,12 @@ public class MBOBook {
                 modify(mboDecoder);
                 return true;
             }
-            // TODO: Support Clear?
+                // TODO: Support Clear?
         }
         return false;
     }
 
-    private Order createOrder(final MBODecoder mboDecoder) {
+    private Order createOrder(final MboDecoder mboDecoder) {
         PoolNode<Order> orderPoolNode = orderPool.acquire();
         var order = orderPoolNode.getItem();
 
@@ -74,7 +76,8 @@ public class MBOBook {
         order.entryTime = mboDecoder.timestampRecv();
         order.eventTime = mboDecoder.timestampEvent();
 
-        order.nextOrder = order.prevOrder = null;
+        order.nextOrder = null;
+        order.prevOrder = null;
         order.parentLimit = null;
         order.self = orderPoolNode;
 
@@ -89,8 +92,11 @@ public class MBOBook {
         limit.limitPrice = order.limitPrice;
         limit.orders = 0;
         limit.size = 0;
-        limit.parent = limit.left = limit.right = null;
-        limit.head = limit.tail = null;
+        limit.parent = null;
+        limit.left = null;
+        limit.right = null;
+        limit.head = null;
+        limit.tail = null;
         limit.self = limitPoolNode;
 
         this.limitMap.put(limit.limitPrice, limit);
@@ -98,7 +104,7 @@ public class MBOBook {
         return limit;
     }
 
-    private void insert(final MBODecoder mboDecoder) {
+    private void insert(final MboDecoder mboDecoder) {
         final Order order = this.createOrder(mboDecoder);
         Limit existingLimit = limitMap.get(mboDecoder.price());
         if (existingLimit != null) {
@@ -108,9 +114,9 @@ public class MBOBook {
 
         existingLimit = this.createLimit(order);
         if (order.isBid) {
-            bidTree = BSTUtils.insert(bidTree, existingLimit);
+            bidTree = BstUtils.insert(bidTree, existingLimit);
         } else {
-            askTree = BSTUtils.insert(askTree, existingLimit);
+            askTree = BstUtils.insert(askTree, existingLimit);
         }
 
         if (order.isBid && (highestBid == null || highestBid.limitPrice < existingLimit.limitPrice)) {
@@ -120,7 +126,7 @@ public class MBOBook {
         }
     }
 
-    private void cancel(final MBODecoder mboDecoder, final boolean forceRemove) {
+    private void cancel(final MboDecoder mboDecoder, final boolean forceRemove) {
         final Order order = this.orderMap.get(mboDecoder.orderId());
         if (order == null) {
             // TODO: Something better here?
@@ -141,19 +147,19 @@ public class MBOBook {
                 if (highestBid == limit) {
                     highestBid = limit.parent;
                 }
-                bidTree = BSTUtils.remove(bidTree, limit);
+                bidTree = BstUtils.remove(bidTree, limit);
             } else {
                 if (lowestAsk == limit) {
                     lowestAsk = limit.parent;
                 }
-                askTree = BSTUtils.remove(askTree, limit);
+                askTree = BstUtils.remove(askTree, limit);
             }
             this.limitPool.release(limit.self);
         }
         this.orderPool.release(order.self);
     }
 
-    private void modify(final MBODecoder mboDecoder) {
+    private void modify(final MboDecoder mboDecoder) {
         final Order order = this.orderMap.get(mboDecoder.orderId());
         if (order == null) {
             // TODO: Something better here?

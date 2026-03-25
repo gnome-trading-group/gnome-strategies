@@ -4,13 +4,12 @@ import com.lmax.disruptor.EventHandler;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
-import org.agrona.ExpandableArrayBuffer;
-
 import java.io.FileOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import org.agrona.ExpandableArrayBuffer;
 
-public class MarketDataWriter implements EventHandler<Schema> {
+public final class MarketDataWriter implements EventHandler<Schema> {
 
     private final ExpandableArrayBuffer purgatory;
     private final FileOutputStream outputStream;
@@ -41,5 +40,4 @@ public class MarketDataWriter implements EventHandler<Schema> {
             logger.logf(LogMessage.DEBUG, "Wrote %d messages", this.messageCount);
         }
     }
-
 }

@@ -11,8 +11,10 @@ public class Limit {
     long size = 0;
     int orders = 0;
     Limit parent = null;
-    Limit left, right = null;
-    Order head, tail = null;
+    Limit left = null;
+    Limit right = null;
+    Order head = null;
+    Order tail = null;
     PoolNode<Limit> self = null;
 
     /**

@@ -5,7 +5,6 @@ import group.gnometrading.collector.transformer.MarketDataTransformer;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.sm.Listing;
-
 import java.util.Set;
 
 /**
@@ -14,17 +13,14 @@ import java.util.Set;
  * consolidated stream. It then takes the consolidated stream and transforms it
  * into lower-level schemas.
  */
-public class MarketDataAggregator {
+public final class MarketDataAggregator {
 
     private final Logger logger;
     private final MarketDataMerger marketDataMerger;
     private final MarketDataTransformer marketDataTransformer;
 
     public MarketDataAggregator(
-            Logger logger,
-            MarketDataMerger marketDataMerger,
-            MarketDataTransformer marketDataTransformer
-    ) {
+            Logger logger, MarketDataMerger marketDataMerger, MarketDataTransformer marketDataTransformer) {
         this.logger = logger;
         this.marketDataMerger = marketDataMerger;
         this.marketDataTransformer = marketDataTransformer;
@@ -35,5 +31,4 @@ public class MarketDataAggregator {
         Set<Listing> mergedKeys = this.marketDataMerger.runMerger();
         this.marketDataTransformer.runTransformer(mergedKeys);
     }
-
 }

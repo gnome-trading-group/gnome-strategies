@@ -1,17 +1,16 @@
 package group.gnometrading.books;
 
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.stream.Stream;
-
-import static org.junit.jupiter.api.Assertions.*;
-
-class BSTUtilsTest {
+class BstUtilsTest {
 
     private Map<Integer, Limit> limitMap;
 
@@ -26,15 +25,14 @@ class BSTUtilsTest {
                 Arguments.of("1[N,2]", 4, "1[N,2[N,4]]"),
                 Arguments.of("10[5[3,6],15[11,17[N,20]]]", 21, "10[5[3,6],15[11,17[N,20[N,21]]]]"),
                 Arguments.of("10[5[3,6],15[11,17[N,20]]]", 16, "10[5[3,6],15[11,17[16,20]]]"),
-                Arguments.of("10[5[3,6],15[11,17[N,20]]]", 8, "10[5[3,6[N,8]],15[11,17[N,20]]]")
-        );
+                Arguments.of("10[5[3,6],15[11,17[N,20]]]", 8, "10[5[3,6[N,8]],15[11,17[N,20]]]"));
     }
 
     @ParameterizedTest
     @MethodSource("testInsertArguments")
     void testInsert(String initial, int insert, String result) {
         Limit t1 = createTree(initial, new int[] {0});
-        Limit res = BSTUtils.insert(t1, createLimit(insert));
+        Limit res = BstUtils.insert(t1, createLimit(insert));
         assertTrees(createTree(result, new int[] {0}), res, null, null);
     }
 
@@ -46,15 +44,14 @@ class BSTUtilsTest {
                 Arguments.of("1[0,N]", 1, "0"),
                 Arguments.of("1[N,2[0,4]]", 1, "2[0,4]"),
                 Arguments.of("3[2,5[N,7]]", 3, "5[2,7]"),
-                Arguments.of("3[2,7[4[N,6],N]]", 3, "4[2,7[6,N]]")
-        );
+                Arguments.of("3[2,7[4[N,6],N]]", 3, "4[2,7[6,N]]"));
     }
 
     @ParameterizedTest
     @MethodSource("testRemoveArguments")
     void testRemove(String initial, int remove, String result) {
         Limit t1 = createTree(initial, new int[] {0});
-        Limit res = BSTUtils.remove(t1, this.limitMap.get(remove));
+        Limit res = BstUtils.remove(t1, this.limitMap.get(remove));
         assertTrees(createTree(result, new int[] {0}), res, null, null);
     }
 
@@ -103,7 +100,6 @@ class BSTUtilsTest {
         limitMap.put(price, l1);
         return l1;
     }
-
 
     private static void assertTrees(Limit tree1, Limit tree2, Limit tree1Parent, Limit tree2Parent) {
         if (tree1 == null || tree2 == null) {

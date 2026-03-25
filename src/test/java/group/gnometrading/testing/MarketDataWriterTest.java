@@ -1,21 +1,19 @@
 package group.gnometrading.testing;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import group.gnometrading.logging.NullLogger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
-import org.agrona.ExpandableArrayBuffer;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Random;
 import org.agrona.MutableDirectBuffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Random;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 class MarketDataWriterTest {
 
@@ -82,7 +80,7 @@ class MarketDataWriterTest {
 
         // Verify each message in the file
         int msgSize = schema1.totalMessageSize();
-        
+
         byte[] expected1 = new byte[msgSize];
         schema1.buffer.getBytes(0, expected1, 0, msgSize);
         byte[] actual1 = new byte[msgSize];
@@ -108,7 +106,7 @@ class MarketDataWriterTest {
 
         int messageCount = 250;
         TestSchema[] schemas = new TestSchema[messageCount];
-        
+
         // Create and write messages
         for (int i = 0; i < messageCount; i++) {
             schemas[i] = new TestSchema("msg" + i);
@@ -125,7 +123,7 @@ class MarketDataWriterTest {
         assertEquals(expectedSize, fileContent.length, "File should contain all messages");
 
         // Spot check a few messages
-        for (int i : new int[]{0, 50, 100, 150, 200, 249}) {
+        for (int i : new int[] {0, 50, 100, 150, 200, 249}) {
             byte[] expected = new byte[msgSize];
             schemas[i].buffer.getBytes(0, expected, 0, msgSize);
             byte[] actual = new byte[msgSize];
@@ -223,11 +221,5 @@ class MarketDataWriterTest {
         public long getEventTimestamp() {
             return 0;
         }
-
-        @Override
-        public int totalMessageSize() {
-            return MESSAGE_SIZE;
-        }
     }
 }
-

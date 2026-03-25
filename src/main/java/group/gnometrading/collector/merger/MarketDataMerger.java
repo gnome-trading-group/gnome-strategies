@@ -7,18 +7,23 @@ import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sm.Listing;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
-import software.amazon.awssdk.services.s3.model.S3Error;
-import software.amazon.awssdk.services.s3.model.S3Object;
-
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
+import software.amazon.awssdk.services.s3.model.S3Error;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 /**
  * This class takes in the raw S3 files dumped by
@@ -27,7 +32,7 @@ import java.util.stream.Collectors;
  * It adds an artificial delay latency to the data to make sure containers
  * have time to post their most data.
  */
-public class MarketDataMerger {
+public final class MarketDataMerger {
 
     private static final int MAX_KEYS = 5000;
     private static final int MAX_DELETE_SIZE = 1000;
@@ -48,8 +53,7 @@ public class MarketDataMerger {
             SecurityMaster securityMaster,
             String inputBucket,
             String outputBucket,
-            String archiveBucket
-    ) {
+            String archiveBucket) {
         this.logger = logger;
         this.clock = clock;
         this.s3Client = s3Client;
@@ -67,7 +71,11 @@ public class MarketDataMerger {
         }
 
         input.entrySet().parallelStream().forEach(entry -> {
-            logger.logf(LogMessage.DEBUG, "Running key %s with %d entries", entry.getKey().toString(), entry.getValue().size());
+            logger.logf(
+                    LogMessage.DEBUG,
+                    "Running key %s with %d entries",
+                    entry.getKey().toString(),
+                    entry.getValue().size());
             mergeKeys(entry.getKey(), entry.getValue());
         });
 
@@ -89,12 +97,10 @@ public class MarketDataMerger {
                 .map(key -> ObjectIdentifier.builder().key(key).build())
                 .toList();
         targetKeys.parallelStream().forEach(object -> {
-            var copyResponse = s3Client.copyObject(request -> request
-                    .destinationBucket(archiveBucket)
+            var copyResponse = s3Client.copyObject(request -> request.destinationBucket(archiveBucket)
                     .destinationKey(object.key())
                     .sourceBucket(inputBucket)
-                    .sourceKey(object.key())
-            );
+                    .sourceKey(object.key()));
             logger.logf(LogMessage.DEBUG, "Copied key %s to archive bucket", object.key());
             if (!copyResponse.sdkHttpResponse().isSuccessful()) {
                 throw new RuntimeException("Failed to copy key %s to archive bucket".formatted(object.key()));
@@ -109,10 +115,7 @@ public class MarketDataMerger {
 
         batches.parallelStream().forEach(batch -> {
             var response = s3Client.deleteObjects(
-                    request -> request
-                            .bucket(inputBucket)
-                            .delete(delete -> delete.objects(batch))
-            );
+                    request -> request.bucket(inputBucket).delete(delete -> delete.objects(batch)));
             if (response.hasErrors()) {
                 for (S3Error error : response.errors()) {
                     logger.logf(LogMessage.UNKNOWN_ERROR, "Error deleting key %s: %s", error.key(), error.message());
@@ -126,7 +129,7 @@ public class MarketDataMerger {
     private void mergeKeys(MarketDataEntry mergedEntry, List<MarketDataEntry> rawEntries) {
         Map<String, List<Schema>> entries = new LinkedHashMap<>();
         for (MarketDataEntry entry : rawEntries) {
-            entries.put(entry.getUUID(), entry.loadFromS3(s3Client, inputBucket));
+            entries.put(entry.getUuid(), entry.loadFromS3(s3Client, inputBucket));
         }
 
         int totalRecords = entries.values().stream().mapToInt(List::size).sum();
@@ -139,7 +142,12 @@ public class MarketDataMerger {
             logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write merged key: %s", e.getMessage());
             throw new RuntimeException(e);
         }
-        logger.logf(LogMessage.DEBUG, "Wrote %d (out of %d) records to merged key %s", outputEntries.size(), totalRecords, mergedEntry);
+        logger.logf(
+                LogMessage.DEBUG,
+                "Wrote %d (out of %d) records to merged key %s",
+                outputEntries.size(),
+                totalRecords,
+                mergedEntry);
     }
 
     /**
@@ -148,8 +156,7 @@ public class MarketDataMerger {
      * @return a map of merged entries to the list of raw entries that make up the merged entry
      */
     private Map<MarketDataEntry, List<MarketDataEntry>> collectRawFiles() {
-        var paginator = this.s3Client.listObjectsV2Paginator(request -> request.bucket(this.inputBucket))
-                .stream()
+        var paginator = this.s3Client.listObjectsV2Paginator(request -> request.bucket(this.inputBucket)).stream()
                 .flatMap(response -> response.contents().stream())
                 .sorted(Comparator.comparing(S3Object::key))
                 .limit(MAX_KEYS)
@@ -158,13 +165,19 @@ public class MarketDataMerger {
 
         for (var s3Object : paginator) {
             MarketDataEntry entry = MarketDataEntry.fromKey(s3Object.key());
-            assert entry.getEntryType() == MarketDataEntry.EntryType.RAW : "Expected raw entry, got " + entry.getEntryType();
+            assert entry.getEntryType() == MarketDataEntry.EntryType.RAW
+                    : "Expected raw entry, got " + entry.getEntryType();
 
             if (!entry.getTimestamp().plus(MERGE_DELAY).isBefore(LocalDateTime.now(clock))) {
                 continue;
             }
 
-            MarketDataEntry mergedEntry = new MarketDataEntry(entry.getSecurityId(), entry.getExchangeId(), entry.getSchemaType(), entry.getTimestamp(), MarketDataEntry.EntryType.AGGREGATED);
+            MarketDataEntry mergedEntry = new MarketDataEntry(
+                    entry.getSecurityId(),
+                    entry.getExchangeId(),
+                    entry.getSchemaType(),
+                    entry.getTimestamp(),
+                    MarketDataEntry.EntryType.AGGREGATED);
             outputFiles.computeIfAbsent(mergedEntry, k -> new ArrayList<>()).add(entry);
         }
         return outputFiles;
@@ -172,7 +185,7 @@ public class MarketDataMerger {
 
     private SchemaMergeStrategy getMergeStrategy(SchemaType schemaType) {
         return switch (schemaType) {
-            case MBP_10 -> new MBP10MergeStrategy();
+            case MBP_10 -> new Mbp10MergeStrategy();
             default -> throw new IllegalArgumentException("Unsupported schema type: " + schemaType);
         };
     }
