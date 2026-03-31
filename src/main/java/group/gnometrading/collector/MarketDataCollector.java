@@ -3,6 +3,7 @@ package group.gnometrading.collector;
 import com.github.luben.zstd.ZstdOutputStream;
 import com.lmax.disruptor.EventHandler;
 import group.gnometrading.annotations.VisibleForTesting;
+import group.gnometrading.data.MarketDataEntry;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import group.gnometrading.schemas.Schema;
@@ -14,6 +15,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.agrona.ExpandableArrayBuffer;
 import software.amazon.awssdk.services.s3.S3Client;
 
@@ -31,6 +33,7 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
     private final ByteArrayOutputStream rawBuffer;
     private ZstdOutputStream outputStream;
 
+    public volatile long lastEventNanos;
     private volatile boolean closed;
     private volatile boolean shutdownRequested;
     private final CountDownLatch cycleFlippedLatch;
@@ -58,6 +61,7 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
         this.closed = false;
         this.shutdownRequested = false;
         this.cycleFlippedLatch = new CountDownLatch(1);
+        this.lastEventNanos = 0;
 
         LocalDateTime cycleStart = LocalDateTime.now(clock).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
         this.entry = new MarketDataEntry(this.listing, cycleStart, MarketDataEntry.EntryType.RAW);
@@ -68,6 +72,7 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
     }
 
     public void onEvent(final Schema schema, long sequence, boolean endOfBatch) throws Exception {
+        this.lastEventNanos = TimeUnit.MILLISECONDS.toNanos(this.clock.millis());
         if (closed) {
             return;
         }
