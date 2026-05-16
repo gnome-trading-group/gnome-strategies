@@ -89,12 +89,10 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     public final void onSequencedEvent(long globalSequence, int templateId, UnsafeBuffer buffer, int length)
             throws Exception {
         if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID) {
-            execReport.buffer.putBytes(0, buffer, 0, length);
-            execReport.wrap(execReport.buffer);
+            execReport.wrap(buffer);
             onExecutionReport(execReport);
         } else if (templateId == Mbp10Decoder.TEMPLATE_ID) {
-            mbp10.buffer.putBytes(0, buffer, 0, length);
-            mbp10.wrap(mbp10.buffer);
+            mbp10.wrap(buffer);
             onMarketData(mbp10);
         }
     }

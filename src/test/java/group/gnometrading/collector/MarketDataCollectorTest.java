@@ -14,6 +14,7 @@ import group.gnometrading.sm.Security;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -57,69 +58,51 @@ class MarketDataCollectorTest {
     void setup() {
         doReturn(ZoneId.of("UTC")).when(clock).getZone();
 
-        // Mock putObject to return success - capture the lambda and build the request
         lenient()
                 .when(s3Client.putObject(
                         ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class)))
                 .thenAnswer(invocation -> {
                     Consumer<PutObjectRequest.Builder> requestBuilder = invocation.getArgument(0);
-                    // The lambda will be called by the real implementation, but we just return success here
                     return PutObjectResponse.builder().build();
                 });
     }
 
     @Test
     void testNoUploadWithinSameMinute() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add events with timestamps within the same minute (12:00:xx)
-        // All these events have timestamps < minuteStart + 1 minute, so no rotation
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 5), 0, false);
         collector.onEvent(bufWithTimestamp("bbbbbbbb", 2025, 4, 1, 12, 0, 15), 1, false);
         collector.onEvent(bufWithTimestamp("cccccccc", 2025, 4, 1, 12, 0, 30), 2, false);
         collector.onEvent(bufWithTimestamp("dddddddd", 2025, 4, 1, 12, 0, 59), 3, false);
 
-        // No uploads should have occurred yet (all events in same minute)
         verify(s3Client, never())
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
     }
 
     @Test
     void testFileUploadEveryMinute() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
 
-        // Capture the lambdas to verify the keys
         ArgumentCaptor<Consumer<PutObjectRequest.Builder>> requestBuilderCaptor =
                 ArgumentCaptor.forClass(Consumer.class);
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add event with timestamp 12:00:30
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 30), 0, false);
-
-        // Add event with timestamp 12:01:01 - should trigger file upload
-        // (12:01:01 - 1 min = 12:00:01 which is NOT before 12:00:00)
         collector.onEvent(bufWithTimestamp("bbbbbbbb", 2025, 4, 1, 12, 1, 1), 1, false);
 
-        // Verify first file was uploaded
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
 
-        // Add event with timestamp 12:02:01 - should trigger another file upload
         collector.onEvent(bufWithTimestamp("cccccccc", 2025, 4, 1, 12, 2, 1), 2, false);
 
-        // Verify second file was uploaded
         verify(s3Client, times(2))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
 
-        // Verify keys have correct timestamps (minutes only, no seconds)
         List<Consumer<PutObjectRequest.Builder>> builders = requestBuilderCaptor.getAllValues();
 
         PutObjectRequest.Builder builder1 = PutObjectRequest.builder();
@@ -136,30 +119,21 @@ class MarketDataCollectorTest {
 
     @Test
     void testExactMinuteBoundaryTriggersRotation() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
 
-        // Capture the lambda to verify the key
         ArgumentCaptor<Consumer<PutObjectRequest.Builder>> requestBuilderCaptor =
                 ArgumentCaptor.forClass(Consumer.class);
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add event with timestamp 12:00:30
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 30), 0, false);
-
-        // Add event with timestamp EXACTLY 12:01:00 (minuteStart + 1 minute)
-        // This should trigger rotation because 12:01:00 - 1 min = 12:00:00 which is NOT before 12:00:00
         collector.onEvent(bufWithTimestamp("bbbbbbbb", 2025, 4, 1, 12, 1, 0), 1, false);
 
-        // Verify file was uploaded
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
 
-        // Verify the key is for the 12:00 minute
         PutObjectRequest.Builder builder = PutObjectRequest.builder();
         requestBuilderCaptor.getValue().accept(builder);
         PutObjectRequest request = builder.build();
@@ -168,129 +142,88 @@ class MarketDataCollectorTest {
 
     @Test
     void testOneSecondBeforeMinuteBoundaryDoesNotRotate() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add event with timestamp 12:00:30
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 30), 0, false);
-
-        // Add event with timestamp 12:00:59 (one second before minute boundary)
-        // This should NOT trigger rotation because 12:00:59 - 1 min = 11:59:59 which IS before 12:00:00
         collector.onEvent(bufWithTimestamp("bbbbbbbb", 2025, 4, 1, 12, 0, 59), 1, false);
 
-        // Verify no upload occurred
         verify(s3Client, never())
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
     }
 
     @Test
     void testCollectorStartsAtNonZeroSecond() throws Exception {
-        // Start at 12:00:55 (55 seconds into the minute)
         date(2025, 4, 1, 12, 0, 55);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
-        // minuteStart will be truncated to 12:00:00
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add event with timestamp 12:00:58
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 58), 0, false);
-
-        // Add event with timestamp 12:01:55 (exactly 1 minute after collector start wall clock time)
-        // This should trigger rotation because 12:01:55 - 1 min = 12:00:55 which is NOT before 12:00:00
         collector.onEvent(bufWithTimestamp("bbbbbbbb", 2025, 4, 1, 12, 1, 55), 1, false);
 
-        // Verify first file was uploaded
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
     }
 
     @Test
     void testEmptyBufferStillUploads() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add empty event with timestamp in next minute
         collector.onEvent(bufWithTimestamp("", 2025, 4, 1, 12, 1, 1), 0, false);
 
-        // Upload should still occur (zstd stream has headers even with no data)
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
     }
 
     @Test
     void testKeyFormatAndStructure() throws Exception {
-        // Start at 12:34:56
         date(2025, 4, 1, 12, 34, 56);
 
-        // Capture the lambda and build the request to verify the key
         ArgumentCaptor<Consumer<PutObjectRequest.Builder>> requestBuilderCaptor =
                 ArgumentCaptor.forClass(Consumer.class);
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
-        // minuteStart will be truncated to 12:34:00
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add data with timestamp 12:34:58
         collector.onEvent(bufWithTimestamp("testdata", 2025, 4, 1, 12, 34, 58), 0, false);
-
-        // Add data with timestamp 12:35:01 to trigger upload
         collector.onEvent(bufWithTimestamp("moredata", 2025, 4, 1, 12, 35, 1), 1, false);
 
-        // Build the request from the captured lambda
         PutObjectRequest.Builder builder = PutObjectRequest.builder();
         requestBuilderCaptor.getValue().accept(builder);
         PutObjectRequest request = builder.build();
         String key = request.key();
 
-        // Verify key format: securityId/exchangeId/year/month/day/hour/minute/schemaType/uuid.zst
         assertTrue(KEY_PATTERN.matcher(key).matches(), "Key should match pattern: " + key);
         assertTrue(key.startsWith("499/151/"), "Key should start with securityId/exchangeId");
         assertTrue(key.contains("2025/4/1/12/34"), "Key should contain timestamp 2025/4/1/12/34");
         assertTrue(key.contains("/mbo/"), "Key should contain schema type");
         assertTrue(key.endsWith(".zst"), "Key should end with .zst");
 
-        // Verify bucket
         assertEquals(OUTPUT_BUCKET, request.bucket());
     }
 
     @Test
     void testMultipleFileUploads() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
 
-        // Capture the lambdas to verify the keys
         ArgumentCaptor<Consumer<PutObjectRequest.Builder>> requestBuilderCaptor =
                 ArgumentCaptor.forClass(Consumer.class);
         when(s3Client.putObject(requestBuilderCaptor.capture(), any(RequestBody.class)))
                 .thenAnswer(invocation -> PutObjectResponse.builder().build());
 
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add data with timestamps in first minute
         collector.onEvent(bufWithTimestamp("data0", 2025, 4, 1, 12, 0, 10), 0, false);
         collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 0, 20), 1, false);
-
-        // Rotate to next minute with timestamp 12:01:01
         collector.onEvent(bufWithTimestamp("data2", 2025, 4, 1, 12, 1, 1), 2, false);
-
-        // Add data with timestamp in second minute
         collector.onEvent(bufWithTimestamp("data3", 2025, 4, 1, 12, 1, 30), 3, false);
-
-        // Rotate to third minute with timestamp 12:02:01
         collector.onEvent(bufWithTimestamp("data4", 2025, 4, 1, 12, 2, 1), 4, false);
 
-        // Verify two files were uploaded
         verify(s3Client, times(2)).putObject(requestBuilderCaptor.capture(), any(RequestBody.class));
 
         List<Consumer<PutObjectRequest.Builder>> builders = requestBuilderCaptor.getAllValues();
 
-        // Build requests from the captured lambdas
         PutObjectRequest.Builder builder1 = PutObjectRequest.builder();
         builders.get(0).accept(builder1);
         PutObjectRequest request1 = builder1.build();
@@ -299,7 +232,6 @@ class MarketDataCollectorTest {
         builders.get(1).accept(builder2);
         PutObjectRequest request2 = builder2.build();
 
-        // Verify different keys for different minutes
         String key1 = request1.key();
         String key2 = request2.key();
         assertNotEquals(key1, key2, "Keys should be different for different minutes");
@@ -309,23 +241,17 @@ class MarketDataCollectorTest {
 
     @Test
     void testOutOfOrderTimestampsDoNotTriggerRotation() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add event with timestamp 12:01:30 (future)
         collector.onEvent(bufWithTimestamp("future", 2025, 4, 1, 12, 1, 30), 0, false);
 
-        // This should have triggered a rotation
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
 
-        // Now add event with timestamp 12:00:30 (past - out of order)
-        // This should NOT trigger another rotation because 12:00:30 - 1 min = 11:59:30 which IS before 12:01:00
+        // Out-of-order event should NOT trigger another rotation
         collector.onEvent(bufWithTimestamp("past", 2025, 4, 1, 12, 0, 30), 1, false);
 
-        // Still only 1 upload
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
     }
@@ -343,22 +269,16 @@ class MarketDataCollectorTest {
                 });
 
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add data with timestamps
         collector.onEvent(bufWithTimestamp("aaaaaaaa", 2025, 4, 1, 12, 0, 10), 0, false);
         collector.onEvent(bufWithTimestamp("bbbbbbbb", 2025, 4, 1, 12, 0, 20), 1, false);
         collector.onEvent(bufWithTimestamp("cccccccc", 2025, 4, 1, 12, 0, 30), 2, false);
-
-        // Trigger upload by rotating to next minute with timestamp 12:01:01
         collector.onEvent(bufWithTimestamp("dddddddd", 2025, 4, 1, 12, 1, 1), 3, false);
 
-        // Verify we captured data
         assertEquals(1, capturedData.size());
         assertTrue(capturedData.get(0).length > 0, "Should have compressed data");
 
-        // Decompress and verify content
         String decompressed = decompressZstd(capturedData.get(0));
         assertTrue(decompressed.contains("aaaaaaaa"), "Should contain first event data");
         assertTrue(decompressed.contains("bbbbbbbb"), "Should contain second event data");
@@ -367,15 +287,11 @@ class MarketDataCollectorTest {
 
     @Test
     void testWaitForCycleAndCloseWaitsUntilCycleFlips() throws Exception {
-        // Start at 12:00:00
         date(2025, 4, 1, 12, 0, 0);
-        MarketDataCollector collector =
-                new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false);
+        MarketDataCollector collector = collector(Duration.ZERO);
 
-        // Add some data in the first minute
         collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 0, 10), 0, false);
 
-        // Start waitForCycleAndClose in a separate thread - it should block until cycle flips
         Thread shutdownThread = new Thread(() -> {
             try {
                 collector.waitForCycleAndClose();
@@ -389,7 +305,6 @@ class MarketDataCollectorTest {
 
         assertTrue(shutdownThread.isAlive(), "Shutdown thread should still be waiting for cycle to flip");
 
-        // Now send an event that triggers a cycle flip (timestamp in next minute)
         collector.onEvent(bufWithTimestamp("data2", 2025, 4, 1, 12, 1, 5), 1, false);
 
         shutdownThread.join(5000);
@@ -397,6 +312,188 @@ class MarketDataCollectorTest {
 
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
+    }
+
+    @Test
+    void testOutOfOrderEventsRoutedToPreviousBuffer() throws Exception {
+        List<byte[]> capturedData = new ArrayList<>();
+        ArgumentCaptor<Consumer<PutObjectRequest.Builder>> keyCaptor = ArgumentCaptor.forClass(Consumer.class);
+
+        when(s3Client.putObject(keyCaptor.capture(), any(RequestBody.class))).thenAnswer(invocation -> {
+            RequestBody body = invocation.getArgument(1);
+            byte[] data = body.contentStreamProvider().newStream().readAllBytes();
+            capturedData.add(data);
+            return PutObjectResponse.builder().build();
+        });
+
+        date(2025, 4, 1, 12, 0, 0);
+        // Grace period of 10s so the previous buffer stays open long enough for the late event
+        MarketDataCollector collector = collector(Duration.ofSeconds(10));
+
+        // Event in minute 12:00
+        collector.onEvent(bufWithTimestamp("early", 2025, 4, 1, 12, 0, 30), 0, false);
+
+        // This triggers rotation: 12:00 buffer becomes previousCycle, 12:01 becomes current
+        collector.onEvent(bufWithTimestamp("trigger", 2025, 4, 1, 12, 1, 2), 1, false);
+
+        // Late event for 12:00 — arrives within grace period, should go to previous buffer
+        collector.onEvent(bufWithTimestamp("late", 2025, 4, 1, 12, 0, 55), 2, false);
+
+        // No upload yet — grace period has not expired
+        verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Advance event time past grace deadline (12:01:00 + 10s = 12:01:10)
+        collector.onEvent(bufWithTimestamp("advance", 2025, 4, 1, 12, 1, 11), 3, false);
+
+        // Previous buffer (12:00) should now be uploaded
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Verify the 12:00 file contains both the in-order and out-of-order events
+        assertEquals(1, capturedData.size());
+        String decompressed = decompressZstd(capturedData.get(0));
+        assertTrue(decompressed.contains("early"), "12:00 file should contain in-order event");
+        assertTrue(decompressed.contains("late"), "12:00 file should contain out-of-order event");
+        assertFalse(decompressed.contains("trigger"), "12:00 file should not contain 12:01 event");
+    }
+
+    @Test
+    void testGracePeriodExpiresAndUploadsPreviousBuffer() throws Exception {
+        date(2025, 4, 1, 12, 0, 0);
+        MarketDataCollector collector = collector(Duration.ofSeconds(5));
+
+        collector.onEvent(bufWithTimestamp("data", 2025, 4, 1, 12, 0, 30), 0, false);
+
+        // Rotation: 12:00 buffer becomes previousCycle
+        collector.onEvent(bufWithTimestamp("rot", 2025, 4, 1, 12, 1, 1), 1, false);
+
+        // Still within grace period (12:01:01 < 12:01:00 + 5s = 12:01:05)
+        verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Exactly at grace deadline: 12:01:05 = 12:01:00 + 5s — should trigger upload
+        collector.onEvent(bufWithTimestamp("grace", 2025, 4, 1, 12, 1, 5), 2, false);
+
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
+    }
+
+    @Test
+    void testShutdownUploadsBothBuffers() throws Exception {
+        List<byte[]> capturedData = new ArrayList<>();
+        ArgumentCaptor<Consumer<PutObjectRequest.Builder>> keyCaptor = ArgumentCaptor.forClass(Consumer.class);
+
+        when(s3Client.putObject(keyCaptor.capture(), any(RequestBody.class))).thenAnswer(invocation -> {
+            RequestBody body = invocation.getArgument(1);
+            byte[] data = body.contentStreamProvider().newStream().readAllBytes();
+            capturedData.add(data);
+            return PutObjectResponse.builder().build();
+        });
+
+        date(2025, 4, 1, 12, 0, 0);
+        // Long grace period so previous buffer stays open until shutdown
+        MarketDataCollector collector = collector(Duration.ofSeconds(30));
+
+        collector.onEvent(bufWithTimestamp("min0", 2025, 4, 1, 12, 0, 30), 0, false);
+
+        // Rotation: 12:00 becomes previous, 12:01 becomes current
+        collector.onEvent(bufWithTimestamp("min1", 2025, 4, 1, 12, 1, 2), 1, false);
+
+        // No uploads yet (grace period not expired)
+        verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Trigger shutdown
+        Thread shutdownThread = new Thread(() -> {
+            try {
+                collector.waitForCycleAndClose();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        shutdownThread.start();
+        Thread.sleep(50);
+
+        // Send an event that triggers the next rotation (triggers shutdown path)
+        collector.onEvent(bufWithTimestamp("min2", 2025, 4, 1, 12, 2, 1), 2, false);
+
+        shutdownThread.join(5000);
+        assertFalse(shutdownThread.isAlive(), "Shutdown should complete");
+
+        // Both 12:00 and 12:01 buffers should be uploaded
+        verify(s3Client, times(2)).putObject(any(Consumer.class), any(RequestBody.class));
+
+        List<Consumer<PutObjectRequest.Builder>> keys = keyCaptor.getAllValues();
+        PutObjectRequest.Builder b1 = PutObjectRequest.builder();
+        keys.get(0).accept(b1);
+        PutObjectRequest.Builder b2 = PutObjectRequest.builder();
+        keys.get(1).accept(b2);
+
+        String key1 = b1.build().key();
+        String key2 = b2.build().key();
+        assertTrue(key1.contains("12/0") || key2.contains("12/0"), "One upload should be for 12:00");
+        assertTrue(key1.contains("12/1") || key2.contains("12/1"), "One upload should be for 12:01");
+    }
+
+    @Test
+    void testMultipleRotationsForceFinalizePrevious() throws Exception {
+        date(2025, 4, 1, 12, 0, 0);
+        // Long grace period: second rotation should force-upload the previous buffer early
+        MarketDataCollector collector = collector(Duration.ofSeconds(30));
+
+        collector.onEvent(bufWithTimestamp("data0", 2025, 4, 1, 12, 0, 30), 0, false);
+
+        // First rotation: 12:00 → previous
+        collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 1, 1), 1, false);
+
+        verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Second rotation: force-uploads previous (12:00), then 12:01 → previous
+        collector.onEvent(bufWithTimestamp("data2", 2025, 4, 1, 12, 2, 1), 2, false);
+
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
+    }
+
+    @Test
+    void testOutOfOrderEventAfterGraceExpiry() throws Exception {
+        List<byte[]> capturedData = new ArrayList<>();
+
+        when(s3Client.putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class)))
+                .thenAnswer(invocation -> {
+                    RequestBody body = invocation.getArgument(1);
+                    byte[] data = body.contentStreamProvider().newStream().readAllBytes();
+                    capturedData.add(data);
+                    return PutObjectResponse.builder().build();
+                });
+
+        date(2025, 4, 1, 12, 0, 0);
+        MarketDataCollector collector = collector(Duration.ofSeconds(5));
+
+        collector.onEvent(bufWithTimestamp("early", 2025, 4, 1, 12, 0, 30), 0, false);
+
+        // Rotation: 12:00 → previous
+        collector.onEvent(bufWithTimestamp("rot", 2025, 4, 1, 12, 1, 1), 1, false);
+
+        // Grace expires: previous uploaded
+        collector.onEvent(bufWithTimestamp("grace", 2025, 4, 1, 12, 1, 6), 2, false);
+
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Event for 12:00 arrives too late (grace already expired) — goes to current (12:01) buffer
+        collector.onEvent(bufWithTimestamp("toolate", 2025, 4, 1, 12, 0, 55), 3, false);
+
+        // No second upload yet
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // Trigger rotation into 12:02 and expire the grace period so 12:01 is uploaded
+        collector.onEvent(bufWithTimestamp("next", 2025, 4, 1, 12, 2, 6), 4, false);
+
+        verify(s3Client, times(2)).putObject(any(Consumer.class), any(RequestBody.class));
+
+        // The 12:00 file should NOT contain the too-late event
+        String decompressed0 = decompressZstd(capturedData.get(0));
+        assertTrue(decompressed0.contains("early"));
+        assertFalse(decompressed0.contains("toolate"), "Too-late event should not be in the 12:00 file");
+    }
+
+    private MarketDataCollector collector(Duration gracePeriod) {
+        return new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false, gracePeriod);
     }
 
     private Schema bufWithTimestamp(String input, int year, int month, int day, int hour, int minute, int second) {
@@ -426,7 +523,7 @@ class MarketDataCollectorTest {
         public DummySchema(String input, long eventTimestamp) {
             super(SchemaType.MBP_10);
             this.eventTimestamp = eventTimestamp;
-            this.buffer.putBytes(0, input.getBytes()); // Buffer is size 8 from header padding
+            this.buffer.putBytes(0, input.getBytes());
         }
 
         @Override
