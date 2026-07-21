@@ -1,5 +1,6 @@
 package group.gnometrading.strategies;
 
+import group.gnometrading.SecurityMaster;
 import group.gnometrading.concurrent.GnomeAgent;
 import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Intent;
@@ -37,6 +38,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private final SequencedPoller marketDataPoller;
     private final SequencedPoller execReportPoller;
     private final PositionView positionView;
+    private final SecurityMaster securityMaster;
 
     // Pre-allocated flyweights for zero-alloc reads
     private final Mbp10Schema mbp10 = new Mbp10Schema();
@@ -46,11 +48,13 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
             SequencedRingBuffer<?> marketDataBuffer,
             SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
             SequencedRingBuffer<Intent> intentBuffer,
-            PositionView positionView) {
+            PositionView positionView,
+            SecurityMaster securityMaster) {
         this.marketDataBuffer = marketDataBuffer;
         this.execReportBuffer = execReportBuffer;
         this.intentBuffer = intentBuffer;
         this.positionView = positionView;
+        this.securityMaster = securityMaster;
         this.marketDataPoller = marketDataBuffer.createPoller(this);
         this.execReportPoller = execReportBuffer.createPoller(this);
     }
@@ -63,6 +67,11 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     /** Read-only access to position state for this strategy. */
     protected final PositionView getPositionView() {
         return positionView;
+    }
+
+    /** Read-only access to the security master for listing lookups. */
+    protected final SecurityMaster getSecurityMaster() {
+        return securityMaster;
     }
 
     /**

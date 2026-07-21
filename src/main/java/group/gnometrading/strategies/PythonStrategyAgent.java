@@ -1,5 +1,6 @@
 package group.gnometrading.strategies;
 
+import group.gnometrading.SecurityMaster;
 import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.Mbp10Schema;
@@ -40,6 +41,9 @@ public final class PythonStrategyAgent extends StrategyAgent {
 
         /** Simulated processing latency in nanoseconds (accounts for Python overhead). */
         long simulateProcessingTime();
+
+        /** Called once at construction time with the position view and security master. */
+        void onInit(PositionView positionView, SecurityMaster securityMaster);
     }
 
     private static volatile PythonStrategyCallback globalCallback;
@@ -51,9 +55,11 @@ public final class PythonStrategyAgent extends StrategyAgent {
             SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
             SequencedRingBuffer<Intent> intentBuffer,
             PositionView positionView,
+            SecurityMaster securityMaster,
             PythonStrategyCallback callback) {
-        super(marketDataBuffer, execReportBuffer, intentBuffer, positionView);
+        super(marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster);
         this.callback = callback;
+        callback.onInit(positionView, securityMaster);
     }
 
     /**
@@ -82,8 +88,10 @@ public final class PythonStrategyAgent extends StrategyAgent {
             SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
             SequencedRingBuffer<Intent> intentBuffer,
             PositionView positionView,
+            SecurityMaster securityMaster,
             PythonStrategyCallback callback) {
-        return new PythonStrategyAgent(marketDataBuffer, execReportBuffer, intentBuffer, positionView, callback);
+        return new PythonStrategyAgent(
+                marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster, callback);
     }
 
     /**
@@ -92,12 +100,13 @@ public final class PythonStrategyAgent extends StrategyAgent {
      * <p>Used for backtest replay, where the agent manages its own buffers independently of
      * any orchestrator.
      */
-    public static PythonStrategyAgent create(PositionView positionView, PythonStrategyCallback callback) {
+    public static PythonStrategyAgent create(
+            PositionView positionView, SecurityMaster securityMaster, PythonStrategyCallback callback) {
         GlobalSequence seq = new GlobalSequence();
         SequencedRingBuffer<Mbp10Schema> mdBuffer = new SequencedRingBuffer<>(Mbp10Schema::new, seq);
         SequencedRingBuffer<OrderExecutionReport> erBuffer = new SequencedRingBuffer<>(OrderExecutionReport::new, seq);
         SequencedRingBuffer<Intent> intentBuffer = new SequencedRingBuffer<>(Intent::new, seq);
-        return new PythonStrategyAgent(mdBuffer, erBuffer, intentBuffer, positionView, callback);
+        return new PythonStrategyAgent(mdBuffer, erBuffer, intentBuffer, positionView, securityMaster, callback);
     }
 
     @Override
