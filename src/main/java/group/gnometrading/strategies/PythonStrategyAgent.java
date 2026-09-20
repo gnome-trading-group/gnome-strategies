@@ -51,13 +51,14 @@ public final class PythonStrategyAgent extends StrategyAgent {
     private final PythonStrategyCallback callback;
 
     private PythonStrategyAgent(
+            int strategyId,
             SequencedRingBuffer<?> marketDataBuffer,
             SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
             SequencedRingBuffer<Intent> intentBuffer,
             PositionView positionView,
             SecurityMaster securityMaster,
             PythonStrategyCallback callback) {
-        super(marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster);
+        super(strategyId, marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster);
         this.callback = callback;
         callback.onInit(positionView, securityMaster);
     }
@@ -84,6 +85,7 @@ public final class PythonStrategyAgent extends StrategyAgent {
      * owns the ring buffers and passes them in.
      */
     public static PythonStrategyAgent createWithBuffers(
+            int strategyId,
             SequencedRingBuffer<?> marketDataBuffer,
             SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
             SequencedRingBuffer<Intent> intentBuffer,
@@ -91,7 +93,7 @@ public final class PythonStrategyAgent extends StrategyAgent {
             SecurityMaster securityMaster,
             PythonStrategyCallback callback) {
         return new PythonStrategyAgent(
-                marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster, callback);
+                strategyId, marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster, callback);
     }
 
     /**
@@ -101,12 +103,13 @@ public final class PythonStrategyAgent extends StrategyAgent {
      * any orchestrator.
      */
     public static PythonStrategyAgent create(
-            PositionView positionView, SecurityMaster securityMaster, PythonStrategyCallback callback) {
+            int strategyId, PositionView positionView, SecurityMaster securityMaster, PythonStrategyCallback callback) {
         GlobalSequence seq = new GlobalSequence();
         SequencedRingBuffer<Mbp10Schema> mdBuffer = new SequencedRingBuffer<>(Mbp10Schema::new, seq);
         SequencedRingBuffer<OrderExecutionReport> erBuffer = new SequencedRingBuffer<>(OrderExecutionReport::new, seq);
         SequencedRingBuffer<Intent> intentBuffer = new SequencedRingBuffer<>(Intent::new, seq);
-        return new PythonStrategyAgent(mdBuffer, erBuffer, intentBuffer, positionView, securityMaster, callback);
+        return new PythonStrategyAgent(
+                strategyId, mdBuffer, erBuffer, intentBuffer, positionView, securityMaster, callback);
     }
 
     @Override

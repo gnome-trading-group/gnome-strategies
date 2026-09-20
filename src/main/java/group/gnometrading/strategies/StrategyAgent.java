@@ -39,17 +39,20 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private final SequencedPoller execReportPoller;
     private final PositionView positionView;
     private final SecurityMaster securityMaster;
+    private final int strategyId;
 
     // Pre-allocated flyweights for zero-alloc reads
     private final Mbp10Schema mbp10 = new Mbp10Schema();
     private final OrderExecutionReport execReport = new OrderExecutionReport();
 
     protected StrategyAgent(
+            int strategyId,
             SequencedRingBuffer<?> marketDataBuffer,
             SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
             SequencedRingBuffer<Intent> intentBuffer,
             PositionView positionView,
             SecurityMaster securityMaster) {
+        this.strategyId = strategyId;
         this.marketDataBuffer = marketDataBuffer;
         this.execReportBuffer = execReportBuffer;
         this.intentBuffer = intentBuffer;
@@ -119,6 +122,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      * or cancel orders.
      */
     protected final void publishIntent(Intent intent) {
+        intent.encoder.strategyId((short) strategyId);
         intentBuffer.publishRaw(intent.buffer, intent.messageHeaderDecoder.templateId(), intent.totalMessageSize());
     }
 
