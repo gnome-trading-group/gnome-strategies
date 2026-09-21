@@ -12,6 +12,8 @@ import group.gnometrading.schemas.Schema;
 import group.gnometrading.sequencer.SequencedEventHandler;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
+import org.agrona.concurrent.EpochNanoClock;
+import org.agrona.concurrent.SystemEpochNanoClock;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
@@ -45,6 +47,8 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private final Mbp10Schema mbp10 = new Mbp10Schema();
     private final OrderExecutionReport execReport = new OrderExecutionReport();
 
+    private final EpochNanoClock nanoClock;
+
     protected StrategyAgent(
             int strategyId,
             SequencedRingBuffer<?> marketDataBuffer,
@@ -52,12 +56,31 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
             SequencedRingBuffer<Intent> intentBuffer,
             PositionView positionView,
             SecurityMaster securityMaster) {
+        this(
+                strategyId,
+                marketDataBuffer,
+                execReportBuffer,
+                intentBuffer,
+                positionView,
+                securityMaster,
+                SystemEpochNanoClock.INSTANCE);
+    }
+
+    protected StrategyAgent(
+            int strategyId,
+            SequencedRingBuffer<?> marketDataBuffer,
+            SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
+            SequencedRingBuffer<Intent> intentBuffer,
+            PositionView positionView,
+            SecurityMaster securityMaster,
+            EpochNanoClock nanoClock) {
         this.strategyId = strategyId;
         this.marketDataBuffer = marketDataBuffer;
         this.execReportBuffer = execReportBuffer;
         this.intentBuffer = intentBuffer;
         this.positionView = positionView;
         this.securityMaster = securityMaster;
+        this.nanoClock = nanoClock;
         this.marketDataPoller = marketDataBuffer.createPoller(this);
         this.execReportPoller = execReportBuffer.createPoller(this);
     }
@@ -122,6 +145,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      * or cancel orders.
      */
     protected final void publishIntent(Intent intent) {
+        intent.encoder.timestampSend(nanoClock.nanoTime());
         intent.encoder.strategyId((short) strategyId);
         intentBuffer.publishRaw(intent.buffer, intent.messageHeaderDecoder.templateId(), intent.totalMessageSize());
     }
