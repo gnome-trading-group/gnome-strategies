@@ -208,8 +208,11 @@ class MarketDataWriterTest {
         }
 
         @Override
-        public void wrap(MutableDirectBuffer mutableDirectBuffer) {
-            // No-op for testing
+        protected void wrapCodecs(MutableDirectBuffer mutableDirectBuffer) {}
+
+        @Override
+        protected int getSbeVersion() {
+            return 0;
         }
 
         @Override

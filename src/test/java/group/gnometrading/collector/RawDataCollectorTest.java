@@ -38,8 +38,8 @@ class RawDataCollectorTest {
 
     private static final Listing LISTING = new Listing(
             532,
-            new Exchange(151, "test-exchange", "test-region", SchemaType.MBO),
-            new Security(499, "test-security", 1),
+            new Exchange(151, "TEST_EXCHANGE", "test-exchange", "test-region", SchemaType.MBO),
+            new Security(499, "test-security", null, null, null, null, null, null, false, false, 0L, 0L, true, 0),
             "id",
             "id");
     private static final String BUCKET = "test-bucket";
