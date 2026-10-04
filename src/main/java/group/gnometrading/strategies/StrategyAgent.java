@@ -160,6 +160,16 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     }
 
     /**
+     * Returns the market data ring buffer so the backtest driver can feed the OMS price buffer from the same
+     * events the strategy sees, as the live orchestrator does.
+     *
+     * <p>Not intended for strategy subclasses — exposed for the backtest infrastructure.
+     */
+    public final SequencedRingBuffer<?> getMarketDataBuffer() {
+        return marketDataBuffer;
+    }
+
+    /**
      * Writes a market data event into the strategy's inbound buffer.
      *
      * <p>In production this is done by a gateway/socket-reader agent. In backtest it is called
