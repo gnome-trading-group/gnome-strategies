@@ -17,9 +17,9 @@ import java.util.List;
  * implement the {@link PythonStrategyCallback} interface (which JPype can proxy), and this class
  * bridges the gap by extending {@link StrategyAgent} and delegating to the callback.
  *
- * <p>Python strategies explicitly report their simulated processing latency via
- * {@link PythonStrategyCallback#simulateProcessingTime()} because Python interpreter overhead is
- * significant compared to native Java execution.
+ * <p>Python strategies report their simulated processing latency via
+ * {@link PythonStrategyCallback#simulateProcessingTime()}; the time spent in Python is never charged
+ * unless the backtest config measures wall-clock processing time.
  *
  * <p>For live/paper trading, use {@link #createWithBuffers} with pre-wired ring buffers from the
  * orchestrator. For backtest replay, use {@link #create} which allocates its own ring buffers.
@@ -39,7 +39,7 @@ public final class PythonStrategyAgent extends StrategyAgent {
         /** Called on each execution report. Returns intents to submit in response. */
         List<Intent> onExecutionReport(OrderExecutionReport report);
 
-        /** Simulated processing latency in nanoseconds (accounts for Python overhead). */
+        /** Simulated processing latency in nanoseconds; 0 means none. */
         long simulateProcessingTime();
 
         /** Called once at construction time with the position view and security master. */

@@ -7,6 +7,8 @@ import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.Mbp10Decoder;
 import group.gnometrading.schemas.Mbp10Schema;
+import group.gnometrading.schemas.Mbp1Decoder;
+import group.gnometrading.schemas.Mbp1Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderExecutionReportDecoder;
 import group.gnometrading.schemas.Schema;
@@ -29,9 +31,8 @@ import org.agrona.concurrent.UnsafeBuffer;
  *
  * <p>Position state is available via {@link #getPositionView()}.
  *
- * <p>The backtest driver measures wall-clock time of {@link #doWork()} via {@code System.nanoTime()}
- * and uses that as processing latency for Java strategies. Python strategies override
- * {@link #simulateProcessingTime()} to provide a fixed constant instead.
+ * <p>In a backtest, {@link #simulateProcessingTime()} is the strategy's processing latency. The
+ * driver uses measured wall-clock time instead only when the backtest config turns that on.
  */
 public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler {
 
@@ -46,6 +47,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
 
     // Pre-allocated flyweights for zero-alloc reads
     private final Mbp10Schema mbp10 = new Mbp10Schema();
+    private final Mbp1Schema mbp1 = new Mbp1Schema();
     private final OrderExecutionReport execReport = new OrderExecutionReport();
 
     private final EpochNanoClock nanoClock;
@@ -135,6 +137,9 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
         } else if (templateId == Mbp10Decoder.TEMPLATE_ID) {
             mbp10.wrap(buffer);
             onMarketData(mbp10);
+        } else if (templateId == Mbp1Decoder.TEMPLATE_ID) {
+            mbp1.wrap(buffer);
+            onMarketData(mbp1);
         }
     }
 
@@ -196,14 +201,12 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     }
 
     /**
-     * Override to provide a fixed processing latency instead of measured wall-clock time.
+     * The simulated time between this strategy seeing an event and its orders leaving, used by the
+     * backtest driver. A fixed value keeps runs deterministic.
      *
-     * <p>Returns 0 by default, which tells the backtest driver to use the actual measured
-     * execution time of {@link #doWork()}. Python strategies override this with a constant
-     * since the Python interpreter overhead makes wall-clock measurement inaccurate for
-     * modeling production Java execution time.
+     * <p>Ignored when the backtest config measures wall-clock processing time instead.
      *
-     * @return fixed processing latency in nanoseconds, or 0 to use measured time
+     * @return processing latency in nanoseconds; 0 (the default) means none
      */
     public long simulateProcessingTime() {
         return 0;
