@@ -2,6 +2,7 @@ package group.gnometrading.strategies;
 
 import group.gnometrading.SecurityMaster;
 import group.gnometrading.concurrent.GnomeAgent;
+import group.gnometrading.concurrent.ThreadProfile;
 import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.Mbp10Decoder;
@@ -113,6 +114,11 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
         work += execReportPoller.poll();
         work += marketDataPoller.poll();
         return work;
+    }
+
+    @Override
+    public final ThreadProfile threadProfile() {
+        return ThreadProfile.HOT_PATH;
     }
 
     /**
