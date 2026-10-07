@@ -5,7 +5,7 @@
     <parent>
         <groupId>group.gnometrading</groupId>
         <artifactId>gnome-parent</artifactId>
-        <version>1.5.0</version>
+        <version>1.5.3</version>
     </parent>
 
     <artifactId>gnome-strategies</artifactId>
@@ -54,12 +54,12 @@
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-registry</artifactId>
-            <version>1.22.3</version>
+            <version>1.29.5</version>
         </dependency>
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-schemas</artifactId>
-            <version>1.8.0</version>
+            <version>1.8.2</version>
         </dependency>
         <dependency>
             <groupId>group.gnometrading</groupId>
@@ -69,12 +69,12 @@
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-oms</artifactId>
-            <version>1.5.3</version>
+            <version>1.9.0</version>
         </dependency>
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-logging</artifactId>
-            <version>1.1.4</version>
+            <version>1.2.2</version>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -87,7 +87,7 @@
         <dependency>
             <groupId>group.gnometrading</groupId>
             <artifactId>gnome-market-data-core</artifactId>
-            <version>1.5.6</version>
+            <version>1.5.14</version>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
