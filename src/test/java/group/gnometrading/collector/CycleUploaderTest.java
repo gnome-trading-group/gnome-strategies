@@ -13,6 +13,7 @@ import group.gnometrading.logging.NullLogger;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -48,12 +49,20 @@ class CycleUploaderTest {
     void rotationHandsTheFinishedCycleToTheUploaderInsteadOfUploadingOnTheCaller() throws IOException {
         List<Runnable> queued = new ArrayList<>();
         CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, queued::add);
-        CycleManager manager =
-                new CycleManager(new NullLogger(), uploader, BUCKET, ts -> ts + ".zst", MINUTE_0, Duration.ZERO, false);
+        CycleManager manager = new CycleManager(
+                new NullLogger(),
+                uploader,
+                BUCKET,
+                ts -> ts + ".zst",
+                ZoneOffset.UTC,
+                Duration.ofMinutes(1),
+                nanos(MINUTE_0),
+                Duration.ZERO,
+                false);
 
         manager.currentOutputStream().write("data".getBytes());
-        manager.rotate(MINUTE_1);
-        manager.rotate(MINUTE_2);
+        manager.rotate(nanos(MINUTE_1));
+        manager.rotate(nanos(MINUTE_2));
 
         verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
         assertEquals(1, queued.size());
@@ -118,5 +127,9 @@ class CycleUploaderTest {
         CycleBuffer cycle = cycleWithData("failed.zst");
 
         assertDoesNotThrow(() -> uploader.upload(cycle, BUCKET));
+    }
+
+    private static long nanos(LocalDateTime time) {
+        return CycleManager.epochNanos(time.toInstant(ZoneOffset.UTC));
     }
 }

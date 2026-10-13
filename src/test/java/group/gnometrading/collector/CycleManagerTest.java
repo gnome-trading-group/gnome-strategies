@@ -9,6 +9,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -47,7 +48,9 @@ class CycleManagerTest {
                 new CycleUploader(new NullLogger(), s3Client, Runnable::run),
                 BUCKET,
                 ts -> ts + ".zst",
-                MINUTE_0,
+                ZoneOffset.UTC,
+                Duration.ofMinutes(1),
+                nanos(MINUTE_0),
                 gracePeriod,
                 false);
     }
@@ -55,17 +58,17 @@ class CycleManagerTest {
     @Test
     void testRotateReturnsFalseNormally() throws IOException {
         CycleManager manager = manager(Duration.ZERO);
-        assertFalse(manager.rotate(MINUTE_1));
+        assertFalse(manager.rotate(nanos(MINUTE_1)));
     }
 
     @Test
     void testDoubleRotationForceUploadsPrevious() throws IOException {
         CycleManager manager = manager(Duration.ofMinutes(5));
 
-        manager.rotate(MINUTE_1);
+        manager.rotate(nanos(MINUTE_1));
         verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
 
-        manager.rotate(MINUTE_2);
+        manager.rotate(nanos(MINUTE_2));
         verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
     }
 
@@ -73,8 +76,8 @@ class CycleManagerTest {
     void testGracePeriodPreventsImmediateUpload() throws IOException {
         CycleManager manager = manager(Duration.ofSeconds(10));
 
-        manager.rotate(MINUTE_1);
-        manager.maybeExpireGracePeriod(MINUTE_1.plusSeconds(5));
+        manager.rotate(nanos(MINUTE_1));
+        manager.maybeExpireGracePeriod(nanos(MINUTE_1.plusSeconds(5)));
 
         verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
     }
@@ -83,8 +86,8 @@ class CycleManagerTest {
     void testGracePeriodExpiryTriggersUpload() throws IOException {
         CycleManager manager = manager(Duration.ofSeconds(10));
 
-        manager.rotate(MINUTE_1);
-        manager.maybeExpireGracePeriod(MINUTE_1.plusSeconds(10));
+        manager.rotate(nanos(MINUTE_1));
+        manager.maybeExpireGracePeriod(nanos(MINUTE_1.plusSeconds(10)));
 
         verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
     }
@@ -101,10 +104,10 @@ class CycleManagerTest {
         CycleManager manager = manager(Duration.ofSeconds(30));
         manager.currentOutputStream().write("minute0".getBytes());
 
-        manager.rotate(MINUTE_1);
-        manager.resolveTarget(MINUTE_0, MINUTE_0.plusSeconds(55)).write("late".getBytes());
+        manager.rotate(nanos(MINUTE_1));
+        manager.resolveTarget(nanos(MINUTE_0)).write("late".getBytes());
 
-        manager.rotate(MINUTE_2);
+        manager.rotate(nanos(MINUTE_2));
 
         assertEquals(1, uploaded.size());
         try (ZstdInputStream zstd = new ZstdInputStream(new ByteArrayInputStream(uploaded.get(0)))) {
@@ -124,10 +127,10 @@ class CycleManagerTest {
         });
 
         CycleManager manager = manager(Duration.ZERO);
-        manager.resolveTarget(MINUTE_0, MINUTE_0.plusSeconds(30)).write("data".getBytes());
+        manager.resolveTarget(nanos(MINUTE_0)).write("data".getBytes());
 
-        manager.rotate(MINUTE_1);
-        manager.maybeExpireGracePeriod(MINUTE_1);
+        manager.rotate(nanos(MINUTE_1));
+        manager.maybeExpireGracePeriod(nanos(MINUTE_1));
 
         assertEquals(1, uploaded.size());
         try (ZstdInputStream zstd = new ZstdInputStream(new ByteArrayInputStream(uploaded.get(0)))) {
@@ -152,7 +155,7 @@ class CycleManagerTest {
 
         assertTrue(shutdownThread.isAlive(), "Should block until rotation");
 
-        manager.rotate(MINUTE_1);
+        manager.rotate(nanos(MINUTE_1));
 
         shutdownThread.join(5000);
         assertFalse(shutdownThread.isAlive(), "Should complete after rotation");
@@ -167,7 +170,7 @@ class CycleManagerTest {
 
         CycleManager manager = manager(Duration.ofMinutes(5));
         manager.currentOutputStream().write("min0".getBytes());
-        manager.rotate(MINUTE_1);
+        manager.rotate(nanos(MINUTE_1));
         manager.currentOutputStream().write("min1".getBytes());
 
         Thread shutdownThread = new Thread(() -> {
@@ -180,7 +183,7 @@ class CycleManagerTest {
         shutdownThread.start();
         Thread.sleep(50);
 
-        manager.rotate(MINUTE_2);
+        manager.rotate(nanos(MINUTE_2));
 
         shutdownThread.join(5000);
         assertFalse(shutdownThread.isAlive());
@@ -202,10 +205,10 @@ class CycleManagerTest {
     @Test
     void testCurrentTimestampReflectsActiveBuffer() throws IOException {
         CycleManager manager = manager(Duration.ZERO);
-        assertEquals(MINUTE_0, manager.currentTimestamp());
+        assertEquals(nanos(MINUTE_0), manager.currentStartNanos());
 
-        manager.rotate(MINUTE_1);
-        assertEquals(MINUTE_1, manager.currentTimestamp());
+        manager.rotate(nanos(MINUTE_1));
+        assertEquals(nanos(MINUTE_1), manager.currentStartNanos());
     }
 
     @Test
@@ -214,5 +217,9 @@ class CycleManagerTest {
         assertFalse(manager.isClosed());
         manager.close();
         assertTrue(manager.isClosed());
+    }
+
+    private static long nanos(LocalDateTime time) {
+        return CycleManager.epochNanos(time.toInstant(ZoneOffset.UTC));
     }
 }

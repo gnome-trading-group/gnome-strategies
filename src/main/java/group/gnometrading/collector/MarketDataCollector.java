@@ -11,8 +11,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.concurrent.TimeUnit;
 import org.agrona.ExpandableArrayBuffer;
 
@@ -55,13 +53,14 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
         this.purgatory = new ExpandableArrayBuffer(1 << 12);
         this.lastEventNanos = 0;
 
-        LocalDateTime cycleStart = LocalDateTime.now(clock).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
         this.cycleManager = new CycleManager(
                 logger,
                 uploader,
                 bucketName,
                 ts -> new MarketDataEntry(listing, ts, MarketDataEntry.EntryType.RAW).getKey(),
-                cycleStart,
+                clock.getZone(),
+                MarketDataEntry.CYCLE_CHRONO_UNIT.getDuration(),
+                CycleManager.epochNanos(clock.instant()),
                 gracePeriod,
                 attachShutdownHook);
     }
@@ -72,26 +71,20 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
             return;
         }
 
-        long epochSeconds = schema.getEventTimestamp() / 1_000_000_000L;
-        long nanoAdjustment = schema.getEventTimestamp() % 1_000_000_000L;
+        final long eventNanos = schema.getEventTimestamp();
+        final long eventCycleStart = cycleManager.cycleStart(eventNanos);
 
-        Instant instant = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
-        LocalDateTime now = LocalDateTime.ofInstant(instant, clock.getZone());
-        LocalDateTime eventCycleStart = now.truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
-
-        if (!now.minus(MarketDataEntry.CYCLE_CHRONO_UNIT.getDuration()).isBefore(cycleManager.currentTimestamp())) {
+        if (cycleManager.isPastCurrentCycle(eventNanos)) {
             if (cycleManager.rotate(eventCycleStart)) {
                 return;
             }
         }
 
-        cycleManager.maybeExpireGracePeriod(now);
+        cycleManager.maybeExpireGracePeriod(eventNanos);
 
         try {
             schema.buffer.getBytes(0, this.purgatory, 0, schema.totalMessageSize());
-            cycleManager
-                    .resolveTarget(eventCycleStart, now)
-                    .write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
+            cycleManager.resolveTarget(eventCycleStart).write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
         } catch (IOException e) {
             logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write to file stream: %s", e.getMessage());
             throw new RuntimeException(e);

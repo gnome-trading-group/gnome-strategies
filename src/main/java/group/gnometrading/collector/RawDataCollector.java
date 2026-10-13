@@ -10,19 +10,19 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 public final class RawDataCollector implements Closeable {
 
     private static final int HEADER_SIZE = 12; // 8B recvTimestamp + 4B payloadLength
+    private static final int INITIAL_PAYLOAD_SCRATCH = 1 << 16;
 
     private final Logger logger;
-    private final Clock clock;
     private final CycleManager cycleManager;
     private final ByteBuffer headerBuffer = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN);
+    // The socket buffer is direct, and the zstd stream only takes arrays; grown on the rare oversized message.
+    private byte[] payloadScratch = new byte[INITIAL_PAYLOAD_SCRATCH];
 
     public RawDataCollector(Logger logger, Clock clock, CycleUploader uploader, Listing listing, String bucketName) {
         this(logger, clock, uploader, listing, bucketName, true);
@@ -37,15 +37,15 @@ public final class RawDataCollector implements Closeable {
             String bucketName,
             boolean attachShutdownHook) {
         this.logger = logger;
-        this.clock = clock;
 
-        LocalDateTime initialMinute = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
         this.cycleManager = new CycleManager(
                 logger,
                 uploader,
                 bucketName,
                 ts -> buildS3Key(listing, ts),
-                initialMinute,
+                clock.getZone(),
+                Duration.ofMinutes(1),
+                CycleManager.epochNanos(clock.instant()),
                 Duration.ZERO,
                 attachShutdownHook);
     }
@@ -55,17 +55,11 @@ public final class RawDataCollector implements Closeable {
             return;
         }
 
-        long epochSeconds = recvTimestamp / 1_000_000_000L;
-        long nanoAdjustment = recvTimestamp % 1_000_000_000L;
-        LocalDateTime now =
-                LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds, nanoAdjustment), clock.getZone());
-        LocalDateTime minuteStart = now.truncatedTo(ChronoUnit.MINUTES);
-
-        if (!minuteStart.equals(cycleManager.currentTimestamp())) {
-            if (cycleManager.rotate(minuteStart)) {
+        if (cycleManager.isPastCurrentCycle(recvTimestamp)) {
+            if (cycleManager.rotate(cycleManager.cycleStart(recvTimestamp))) {
                 return;
             }
-            cycleManager.maybeExpireGracePeriod(minuteStart);
+            cycleManager.maybeExpireGracePeriod(recvTimestamp);
         }
 
         int payloadLength = buffer.remaining();
@@ -75,10 +69,12 @@ public final class RawDataCollector implements Closeable {
 
         try {
             cycleManager.currentOutputStream().write(headerBuffer.array());
-            ByteBuffer payload = buffer.duplicate();
-            byte[] bytes = new byte[payloadLength];
-            payload.get(bytes);
-            cycleManager.currentOutputStream().write(bytes);
+            if (payloadScratch.length < payloadLength) {
+                payloadScratch = new byte[Math.max(payloadLength, payloadScratch.length * 2)];
+            }
+            // Absolute get: the gateway parses the message from this same position next.
+            buffer.get(buffer.position(), payloadScratch, 0, payloadLength);
+            cycleManager.currentOutputStream().write(payloadScratch, 0, payloadLength);
         } catch (IOException e) {
             logger.logf(LogMessage.UNKNOWN_ERROR, "Error writing raw capture: %s", e.getMessage());
         }

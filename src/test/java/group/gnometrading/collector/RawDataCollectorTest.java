@@ -89,6 +89,55 @@ class RawDataCollectorTest {
     }
 
     @Test
+    void captureCopiesADirectBufferWithoutMovingIt() throws IOException {
+        List<byte[]> uploaded = new ArrayList<>();
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class))).thenAnswer(invocation -> {
+            RequestBody body = invocation.getArgument(1);
+            uploaded.add(body.contentStreamProvider().newStream().readAllBytes());
+            return PutObjectResponse.builder().build();
+        });
+        date(2025, 4, 1, 12, 0, 0);
+        RawDataCollector collector = collector();
+
+        byte[] payload = "direct payload".getBytes();
+        ByteBuffer direct = ByteBuffer.allocateDirect(64);
+        direct.put(new byte[3]).put(payload).flip().position(3);
+        collector.capture(nanos(2025, 4, 1, 12, 0, 30), direct);
+        collector.capture(nanos(2025, 4, 1, 12, 1, 1), buf("next"));
+
+        assertEquals(3, direct.position(), "the gateway still has to parse the message");
+        try (ZstdInputStream zstd = new ZstdInputStream(new ByteArrayInputStream(uploaded.get(0)))) {
+            byte[] record = zstd.readAllBytes();
+            assertArrayEquals(payload, java.util.Arrays.copyOfRange(record, 12, record.length));
+        }
+    }
+
+    @Test
+    void captureWithinACycleAllocatesNothingPerMessage() {
+        date(2025, 4, 1, 12, 0, 0);
+        RawDataCollector collector = collector();
+        ByteBuffer message = ByteBuffer.allocateDirect(256);
+        message.put(new byte[200]).flip();
+        long minuteStart = nanos(2025, 4, 1, 12, 0, 0);
+        for (int i = 0; i < 10_000; i++) {
+            collector.capture(minuteStart + i, message);
+        }
+
+        com.sun.management.ThreadMXBean threads =
+                (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+        long thread = Thread.currentThread().getId();
+        long before = threads.getThreadAllocatedBytes(thread);
+        for (int i = 0; i < 10_000; i++) {
+            collector.capture(minuteStart + 10_000 + i, message);
+        }
+        long allocated = threads.getThreadAllocatedBytes(thread) - before;
+
+        // The minute file grows as compressed data accumulates, so some allocation is amortized across captures;
+        // a single object per capture would be at least 16 bytes each.
+        assertTrue(allocated < 10_000 * 16L, "bytes allocated by 10,000 captures: " + allocated);
+    }
+
+    @Test
     void testNoUploadWithinSameMinute() {
         date(2025, 4, 1, 12, 0, 0);
         RawDataCollector collector = collector();
