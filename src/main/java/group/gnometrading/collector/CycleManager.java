@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
-import software.amazon.awssdk.services.s3.S3Client;
 
 final class CycleManager implements Closeable {
 
@@ -18,7 +17,7 @@ final class CycleManager implements Closeable {
     }
 
     private final Logger logger;
-    private final S3Client s3Client;
+    private final CycleUploader uploader;
     private final String bucketName;
     private final Duration gracePeriod;
     private final KeyFactory keyFactory;
@@ -32,14 +31,14 @@ final class CycleManager implements Closeable {
 
     CycleManager(
             Logger logger,
-            S3Client s3Client,
+            CycleUploader uploader,
             String bucketName,
             KeyFactory keyFactory,
             LocalDateTime initialTimestamp,
             Duration gracePeriod,
             boolean attachShutdownHook) {
         this.logger = logger;
-        this.s3Client = s3Client;
+        this.uploader = uploader;
         this.bucketName = bucketName;
         this.gracePeriod = gracePeriod;
         this.keyFactory = keyFactory;
@@ -60,9 +59,9 @@ final class CycleManager implements Closeable {
         }
     }
 
-    boolean rotate(LocalDateTime newCycleStart) throws IOException {
+    boolean rotate(LocalDateTime newCycleStart) {
         if (previousCycle != null) {
-            previousCycle.upload(s3Client, bucketName, logger);
+            uploader.upload(previousCycle, bucketName);
             previousCycle = null;
         }
 
@@ -72,7 +71,8 @@ final class CycleManager implements Closeable {
         currentCycle = new CycleBuffer(newCycleStart, keyFactory.createKey(newCycleStart));
 
         if (shutdownRequested) {
-            previousCycle.upload(s3Client, bucketName, logger);
+            // Inline so the cycle is in S3 before the shutdown hook waiting on the latch lets the JVM exit.
+            uploader.uploadNow(previousCycle, bucketName);
             previousCycle = null;
             cycleFlippedLatch.countDown();
             return true;
@@ -81,12 +81,12 @@ final class CycleManager implements Closeable {
         return false;
     }
 
-    void maybeExpireGracePeriod(LocalDateTime now) throws IOException {
+    void maybeExpireGracePeriod(LocalDateTime now) {
         if (previousCycle == null) {
             return;
         }
         if (!now.isBefore(currentCycle.timestamp().plus(gracePeriod))) {
-            previousCycle.upload(s3Client, bucketName, logger);
+            uploader.upload(previousCycle, bucketName);
             previousCycle = null;
         }
     }

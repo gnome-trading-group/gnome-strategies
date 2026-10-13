@@ -31,6 +31,10 @@ final class CycleBuffer {
         return timestamp;
     }
 
+    String s3Key() {
+        return s3Key;
+    }
+
     ZstdOutputStream outputStream() {
         return outputStream;
     }

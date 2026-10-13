@@ -61,7 +61,13 @@ class RawDataCollectorTest {
     }
 
     private RawDataCollector collector() {
-        return new RawDataCollector(new NullLogger(), clock, s3Client, LISTING, BUCKET, false);
+        return new RawDataCollector(
+                new NullLogger(),
+                clock,
+                new CycleUploader(new NullLogger(), s3Client, Runnable::run),
+                LISTING,
+                BUCKET,
+                false);
     }
 
     private ByteBuffer buf(String payload) {

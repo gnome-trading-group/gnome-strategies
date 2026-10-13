@@ -493,7 +493,14 @@ class MarketDataCollectorTest {
     }
 
     private MarketDataCollector collector(Duration gracePeriod) {
-        return new MarketDataCollector(new NullLogger(), clock, s3Client, LISTING, OUTPUT_BUCKET, false, gracePeriod);
+        return new MarketDataCollector(
+                new NullLogger(),
+                clock,
+                new CycleUploader(new NullLogger(), s3Client, Runnable::run),
+                LISTING,
+                OUTPUT_BUCKET,
+                false,
+                gracePeriod);
     }
 
     private Schema bufWithTimestamp(String input, int year, int month, int day, int hour, int minute, int second) {

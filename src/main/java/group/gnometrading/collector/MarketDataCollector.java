@@ -15,7 +15,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.concurrent.TimeUnit;
 import org.agrona.ExpandableArrayBuffer;
-import software.amazon.awssdk.services.s3.S3Client;
 
 public final class MarketDataCollector implements EventHandler<Schema>, Closeable {
 
@@ -27,26 +26,26 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
 
     public volatile long lastEventNanos;
 
-    public MarketDataCollector(Logger logger, Clock clock, S3Client s3Client, Listing listing, String bucketName) {
-        this(logger, clock, s3Client, listing, bucketName, true, Duration.ofSeconds(5));
+    public MarketDataCollector(Logger logger, Clock clock, CycleUploader uploader, Listing listing, String bucketName) {
+        this(logger, clock, uploader, listing, bucketName, true, Duration.ofSeconds(5));
     }
 
     @VisibleForTesting
     MarketDataCollector(
             Logger logger,
             Clock clock,
-            S3Client s3Client,
+            CycleUploader uploader,
             Listing listing,
             String bucketName,
             boolean attachShutdownHook) {
-        this(logger, clock, s3Client, listing, bucketName, attachShutdownHook, Duration.ofSeconds(5));
+        this(logger, clock, uploader, listing, bucketName, attachShutdownHook, Duration.ofSeconds(5));
     }
 
     @VisibleForTesting
     MarketDataCollector(
             Logger logger,
             Clock clock,
-            S3Client s3Client,
+            CycleUploader uploader,
             Listing listing,
             String bucketName,
             boolean attachShutdownHook,
@@ -59,7 +58,7 @@ public final class MarketDataCollector implements EventHandler<Schema>, Closeabl
         LocalDateTime cycleStart = LocalDateTime.now(clock).truncatedTo(MarketDataEntry.CYCLE_CHRONO_UNIT);
         this.cycleManager = new CycleManager(
                 logger,
-                s3Client,
+                uploader,
                 bucketName,
                 ts -> new MarketDataEntry(listing, ts, MarketDataEntry.EntryType.RAW).getKey(),
                 cycleStart,

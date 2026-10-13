@@ -14,7 +14,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
-import software.amazon.awssdk.services.s3.S3Client;
 
 public final class RawDataCollector implements Closeable {
 
@@ -25,15 +24,15 @@ public final class RawDataCollector implements Closeable {
     private final CycleManager cycleManager;
     private final ByteBuffer headerBuffer = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN);
 
-    public RawDataCollector(Logger logger, Clock clock, S3Client s3Client, Listing listing, String bucketName) {
-        this(logger, clock, s3Client, listing, bucketName, true);
+    public RawDataCollector(Logger logger, Clock clock, CycleUploader uploader, Listing listing, String bucketName) {
+        this(logger, clock, uploader, listing, bucketName, true);
     }
 
     @VisibleForTesting
     RawDataCollector(
             Logger logger,
             Clock clock,
-            S3Client s3Client,
+            CycleUploader uploader,
             Listing listing,
             String bucketName,
             boolean attachShutdownHook) {
@@ -43,7 +42,7 @@ public final class RawDataCollector implements Closeable {
         LocalDateTime initialMinute = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
         this.cycleManager = new CycleManager(
                 logger,
-                s3Client,
+                uploader,
                 bucketName,
                 ts -> buildS3Key(listing, ts),
                 initialMinute,
@@ -63,15 +62,10 @@ public final class RawDataCollector implements Closeable {
         LocalDateTime minuteStart = now.truncatedTo(ChronoUnit.MINUTES);
 
         if (!minuteStart.equals(cycleManager.currentTimestamp())) {
-            try {
-                if (cycleManager.rotate(minuteStart)) {
-                    return;
-                }
-                cycleManager.maybeExpireGracePeriod(minuteStart);
-            } catch (IOException e) {
-                logger.logf(LogMessage.UNKNOWN_ERROR, "Error rotating raw capture: %s", e.getMessage());
+            if (cycleManager.rotate(minuteStart)) {
                 return;
             }
+            cycleManager.maybeExpireGracePeriod(minuteStart);
         }
 
         int payloadLength = buffer.remaining();

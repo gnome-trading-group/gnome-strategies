@@ -42,7 +42,14 @@ class CycleManagerTest {
     }
 
     private CycleManager manager(Duration gracePeriod) {
-        return new CycleManager(new NullLogger(), s3Client, BUCKET, ts -> ts + ".zst", MINUTE_0, gracePeriod, false);
+        return new CycleManager(
+                new NullLogger(),
+                new CycleUploader(new NullLogger(), s3Client, Runnable::run),
+                BUCKET,
+                ts -> ts + ".zst",
+                MINUTE_0,
+                gracePeriod,
+                false);
     }
 
     @Test
