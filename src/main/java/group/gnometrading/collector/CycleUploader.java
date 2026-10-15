@@ -7,9 +7,12 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.IntSupplier;
 import software.amazon.awssdk.services.s3.S3Client;
 
 /**
@@ -21,35 +24,68 @@ import software.amazon.awssdk.services.s3.S3Client;
  *
  * <p>One thread serves every collector. It blocks on its queue while idle, so it costs no CPU
  * between the once-a-minute rotations, unlike a polling agent on a small CPU quota.
+ *
+ * <p>Every collector rotates at the same minute boundary, so the queue fills all at once. Uploading
+ * that backlog back to back burns a full core of request signing and TLS for as long as it lasts,
+ * which on a small CPU allocation starves the socket readers and delays their receive timestamps.
+ * Uploads are therefore spaced out: a backlog that fits in {@link #DRAIN_WINDOW_NANOS} at {@link
+ * #MAX_SPACING_NANOS} apart is spread across it, and a larger one is spaced more tightly.
  */
 public final class CycleUploader implements Closeable {
 
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
+    static final long DRAIN_WINDOW_NANOS = TimeUnit.SECONDS.toNanos(20);
+    static final long MAX_SPACING_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
 
     private final Logger logger;
     private final S3Client s3Client;
     private final Executor executor;
     private final ExecutorService ownedExecutor;
+    private final IntSupplier queuedUploads;
+    private final Sleeper sleeper;
+    private volatile boolean closing;
 
     public CycleUploader(Logger logger, S3Client s3Client) {
-        this(logger, s3Client, Executors.newSingleThreadExecutor(CycleUploader::newUploaderThread), true);
+        this(logger, s3Client, newUploaderExecutor());
+    }
+
+    private CycleUploader(Logger logger, S3Client s3Client, ThreadPoolExecutor executor) {
+        this(logger, s3Client, executor, executor, () -> executor.getQueue().size(), LockSupport::parkNanos);
     }
 
     @VisibleForTesting
     CycleUploader(Logger logger, S3Client s3Client, Executor executor) {
-        this(logger, s3Client, executor, false);
+        this(logger, s3Client, executor, null, () -> 0, nanos -> {});
     }
 
-    private CycleUploader(Logger logger, S3Client s3Client, Executor executor, boolean ownsExecutor) {
+    @VisibleForTesting
+    CycleUploader(Logger logger, S3Client s3Client, Executor executor, IntSupplier queuedUploads, Sleeper sleeper) {
+        this(logger, s3Client, executor, null, queuedUploads, sleeper);
+    }
+
+    private CycleUploader(
+            Logger logger,
+            S3Client s3Client,
+            Executor executor,
+            ExecutorService ownedExecutor,
+            IntSupplier queuedUploads,
+            Sleeper sleeper) {
         this.logger = logger;
         this.s3Client = s3Client;
         this.executor = executor;
-        this.ownedExecutor = ownsExecutor ? (ExecutorService) executor : null;
-        if (ownsExecutor) {
+        this.ownedExecutor = ownedExecutor;
+        this.queuedUploads = queuedUploads;
+        this.sleeper = sleeper;
+        if (ownedExecutor != null) {
             // Collectors' own shutdown hooks still hand over their last cycles after this runs; those
             // are rejected and uploaded inline, while everything already queued is drained here.
             Runtime.getRuntime().addShutdownHook(new Thread(this::close, "cycle-uploader-shutdown"));
         }
+    }
+
+    private static ThreadPoolExecutor newUploaderExecutor() {
+        return new ThreadPoolExecutor(
+                1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), CycleUploader::newUploaderThread);
     }
 
     private static Thread newUploaderThread(Runnable runnable) {
@@ -63,7 +99,10 @@ public final class CycleUploader implements Closeable {
      */
     void upload(CycleBuffer cycle, String bucketName) {
         try {
-            executor.execute(() -> uploadNow(cycle, bucketName));
+            executor.execute(() -> {
+                uploadNow(cycle, bucketName);
+                pace();
+            });
         } catch (RejectedExecutionException e) {
             // Shutting down: nothing will drain the queue any more, so upload on the caller's thread.
             uploadNow(cycle, bucketName);
@@ -83,11 +122,21 @@ public final class CycleUploader implements Closeable {
         }
     }
 
+    private void pace() {
+        int queued = queuedUploads.getAsInt();
+        if (queued == 0 || closing) {
+            return;
+        }
+        sleeper.sleep(Math.min(MAX_SPACING_NANOS, DRAIN_WINDOW_NANOS / queued));
+    }
+
     @Override
     public void close() {
         if (ownedExecutor == null) {
             return;
         }
+        // The process is stopping, so finishing before the stop timeout matters more than the CPU.
+        closing = true;
         ownedExecutor.shutdown();
         try {
             if (!ownedExecutor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
@@ -99,5 +148,10 @@ public final class CycleUploader implements Closeable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(long nanos);
     }
 }

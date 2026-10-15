@@ -14,7 +14,9 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
@@ -127,6 +129,39 @@ class CycleUploaderTest {
         CycleBuffer cycle = cycleWithData("failed.zst");
 
         assertDoesNotThrow(() -> uploader.upload(cycle, BUCKET));
+    }
+
+    @Test
+    void uploadsAreSpacedOutWhileOthersAreQueued() throws Exception {
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build());
+        Deque<Runnable> queue = new ArrayDeque<>();
+        List<Long> sleeps = new ArrayList<>();
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, queue::add, queue::size, sleeps::add);
+
+        for (int i = 0; i < 3; i++) {
+            uploader.upload(cycleWithData(i + ".zst"), BUCKET);
+        }
+        while (!queue.isEmpty()) {
+            queue.poll().run();
+        }
+
+        verify(s3Client, times(3)).putObject(any(Consumer.class), any(RequestBody.class));
+        assertEquals(List.of(CycleUploader.MAX_SPACING_NANOS, CycleUploader.MAX_SPACING_NANOS), sleeps);
+    }
+
+    @Test
+    void aLargeBacklogIsSpacedToDrainWithinTheWindow() throws Exception {
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build());
+        List<Runnable> tasks = new ArrayList<>();
+        List<Long> sleeps = new ArrayList<>();
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, tasks::add, () -> 400, sleeps::add);
+
+        uploader.upload(cycleWithData("backlog.zst"), BUCKET);
+        tasks.get(0).run();
+
+        assertEquals(List.of(CycleUploader.DRAIN_WINDOW_NANOS / 400), sleeps);
     }
 
     private static long nanos(LocalDateTime time) {
