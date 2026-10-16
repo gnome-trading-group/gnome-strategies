@@ -42,8 +42,11 @@ public final class PythonStrategyAgent extends StrategyAgent {
         /** Simulated processing latency in nanoseconds; 0 means none. */
         long simulateProcessingTime();
 
-        /** Called once at construction time with the position view and security master. */
-        void onInit(PositionView positionView, SecurityMaster securityMaster);
+        /**
+         * Called once at construction time with the position view, the security master, and the control through
+         * which the strategy can end its session.
+         */
+        void onInit(PositionView positionView, SecurityMaster securityMaster, StrategyControl control);
     }
 
     private static volatile PythonStrategyCallback globalCallback;
@@ -60,7 +63,7 @@ public final class PythonStrategyAgent extends StrategyAgent {
             PythonStrategyCallback callback) {
         super(strategyId, marketDataBuffer, execReportBuffer, intentBuffer, positionView, securityMaster);
         this.callback = callback;
-        callback.onInit(positionView, securityMaster);
+        callback.onInit(positionView, securityMaster, this);
     }
 
     /**

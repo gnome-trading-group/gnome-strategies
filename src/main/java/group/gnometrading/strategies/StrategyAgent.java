@@ -15,6 +15,10 @@ import group.gnometrading.schemas.Schema;
 import group.gnometrading.sequencer.SequencedEventHandler;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
+import group.gnometrading.sm.Listing;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.agrona.concurrent.EpochNanoClock;
 import org.agrona.concurrent.SystemEpochNanoClock;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -31,10 +35,13 @@ import org.agrona.concurrent.UnsafeBuffer;
  *
  * <p>Position state is available via {@link #getPositionView()}.
  *
+ * <p>A strategy ends its own session through {@link #requestExit}: from then on its callbacks are no longer called,
+ * and the agent takes it out of the market (see {@link WindDown}) before telling the session, which shuts down.
+ *
  * <p>In a backtest, {@link #simulateProcessingTime()} is the strategy's processing latency. The
  * driver uses measured wall-clock time instead only when the backtest config turns that on.
  */
-public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler {
+public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler, StrategyControl {
 
     private final SequencedRingBuffer<?> marketDataBuffer;
     private final SequencedRingBuffer<OrderExecutionReport> execReportBuffer;
@@ -51,6 +58,12 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private final OrderExecutionReport execReport = new OrderExecutionReport();
 
     private final EpochNanoClock nanoClock;
+
+    private final AtomicReference<ExitRequest> exitRequest = new AtomicReference<>();
+    // Set before the agent starts; without it (a backtest) an exit only silences the strategy.
+    private WindDown windDown;
+    // The strategy thread's own copy of exitRequest, so a pass reads the volatile once.
+    private boolean exiting;
 
     protected StrategyAgent(
             int strategyId,
@@ -111,11 +124,37 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      */
     @Override
     public final int doWork() throws Exception {
+        if (!exiting && exitRequest.get() != null) {
+            exiting = true;
+        }
         int work = 0;
         // Exec reports first so the strategy can react to fills before processing new market data
         work += execReportPoller.poll();
         work += marketDataPoller.poll();
+        if (exiting && windDown != null && !windDown.isFinished()) {
+            windDown.step(exitRequest.get(), nanoClock.nanoTime());
+            work++;
+        }
         return work;
+    }
+
+    /**
+     * Lets the strategy end its session: wires the listings it trades, so an exit can take it out of each, and
+     * whoever shuts the session down once that's done. Called by the orchestrator before the agent starts.
+     */
+    public final void configureExit(List<Listing> listings, ExitListener listener) {
+        this.windDown = new WindDown(listings, positionView, this::publishIntent, listener);
+    }
+
+    @Override
+    public final boolean requestExit(String reason, boolean flatten, long timeoutMillis) {
+        return exitRequest.compareAndSet(
+                null, new ExitRequest(reason, flatten, TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMillis))));
+    }
+
+    @Override
+    public final boolean isExiting() {
+        return exitRequest.get() != null;
     }
 
     @Override
@@ -131,6 +170,10 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     @Override
     public final void onSequencedEvent(long globalSequence, int templateId, UnsafeBuffer buffer, int length)
             throws Exception {
+        // Still drained once the strategy is exiting, so nothing writing to these buffers waits on them.
+        if (exiting) {
+            return;
+        }
         if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID) {
             execReport.wrap(buffer);
             onExecutionReport(execReport);
