@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import group.gnometrading.oms.position.Position;
+import group.gnometrading.schemas.ExecType;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.IntentDecoder;
 import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderType;
+import group.gnometrading.schemas.RejectReason;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.Side;
 import group.gnometrading.sequencer.GlobalSequence;
@@ -120,7 +122,7 @@ class StrategyExitTest {
         ExitResult result = results.get(0);
         assertEquals("match went live", result.reason());
         assertFalse(result.timedOut());
-        assertEquals(List.of(new ExitResult.HeldPosition(2, 3 * UNIT)), result.held());
+        assertEquals(List.of(new ExitResult.HeldPosition(2, 3 * UNIT, ExitResult.Why.KEPT)), result.held());
         assertFalse(result.leftPositions(), "keeping a position was the strategy's choice");
         assertEquals(2, sent.size(), "nothing is sold without flatten");
     }
@@ -215,7 +217,7 @@ class StrategyExitTest {
         ExitResult result = results.get(0);
         assertTrue(result.timedOut());
         assertTrue(result.leftPositions());
-        assertEquals(List.of(new ExitResult.HeldPosition(1, 5 * UNIT)), result.held());
+        assertEquals(List.of(new ExitResult.HeldPosition(1, 5 * UNIT, ExitResult.Why.TIMED_OUT)), result.held());
 
         clock[0] += 10 * SECOND;
         pass();
@@ -252,6 +254,97 @@ class StrategyExitTest {
 
         assertEquals(0, unconfigured.marketData);
         assertEquals(0, intents.createPoller((s, t, b, l) -> {}).poll(), "nothing to cancel or close without listings");
+    }
+
+    @Test
+    void aRemainderTooSmallToTradeIsGivenUpOnAtOnce() throws Exception {
+        positions.get(1).netQuantity = UNIT / 5;
+        strategy.requestExit("done", true, 300_000);
+        pass();
+        clock[0] += WindDown.RETRY_INTERVAL_NANOS;
+        pass();
+        assertEquals(3, sent.size(), "the close goes out");
+
+        report(10, 100, ExecType.REJECT, RejectReason.INVALID_SIZE);
+        pass();
+
+        assertEquals(1, results.size(), "finished without waiting for the time to run out");
+        ExitResult result = results.get(0);
+        assertFalse(result.timedOut());
+        assertTrue(result.leftPositions());
+        assertEquals(List.of(new ExitResult.HeldPosition(1, UNIT / 5, ExitResult.Why.TOO_SMALL)), result.held());
+        clock[0] += 10 * WindDown.RETRY_INTERVAL_NANOS;
+        pass();
+        assertEquals(3, sent.size(), "never tried again");
+    }
+
+    @Test
+    void aCloseRefusedEveryTimeIsGivenUpOnAfterAFewTries() throws Exception {
+        positions.get(1).netQuantity = 5 * UNIT;
+        strategy.requestExit("done", true, 300_000);
+        pass();
+        for (int i = 0; i < WindDown.MAX_CONSECUTIVE_REJECTS; i++) {
+            assertTrue(results.isEmpty(), "still trying after " + i + " rejects");
+            clock[0] += WindDown.RETRY_INTERVAL_NANOS;
+            pass();
+            report(10, 100, ExecType.REJECT, RejectReason.EXCHANGE_REJECTED);
+        }
+        pass();
+
+        assertEquals(2 + WindDown.MAX_CONSECUTIVE_REJECTS, sent.size());
+        assertEquals(ExitResult.Why.REJECTED, results.get(0).held().get(0).why());
+        assertFalse(results.get(0).timedOut());
+    }
+
+    @Test
+    void aFillBetweenRejectsStartsTheCountAgain() throws Exception {
+        positions.get(1).netQuantity = 5 * UNIT;
+        strategy.requestExit("done", true, 300_000);
+        pass();
+        for (int i = 0; i < WindDown.MAX_CONSECUTIVE_REJECTS - 1; i++) {
+            clock[0] += WindDown.RETRY_INTERVAL_NANOS;
+            pass();
+            report(10, 100, ExecType.REJECT, RejectReason.EXCHANGE_REJECTED);
+        }
+        report(10, 100, ExecType.PARTIAL_FILL, null);
+        clock[0] += WindDown.RETRY_INTERVAL_NANOS;
+        pass();
+        report(10, 100, ExecType.REJECT, RejectReason.EXCHANGE_REJECTED);
+        pass();
+
+        assertTrue(results.isEmpty(), "a fill means the venue is taking the closes");
+    }
+
+    @Test
+    void aRejectBeforeAnyCloseWentOutIsNotHeldAgainstTheListing() throws Exception {
+        positions.get(1).netQuantity = 5 * UNIT;
+        strategy.requestExit("done", true, 300_000);
+        pass();
+        report(10, 100, ExecType.REJECT, RejectReason.INVALID_SIZE);
+        clock[0] += WindDown.RETRY_INTERVAL_NANOS;
+        pass();
+
+        assertEquals(3, sent.size(), "an order sent before the exit was refused; the close still goes out");
+        assertTrue(results.isEmpty());
+    }
+
+    @Test
+    void positionsKeptByChoiceSaySo() throws Exception {
+        positions.get(2).netQuantity = UNIT;
+        strategy.requestExit("done", false, 300_000);
+        pass();
+
+        assertEquals(ExitResult.Why.KEPT, results.get(0).held().get(0).why());
+    }
+
+    private void report(int exchangeId, long securityId, ExecType execType, RejectReason rejectReason) {
+        OrderExecutionReport report = new OrderExecutionReport();
+        report.encoder
+                .exchangeId(exchangeId)
+                .securityId(securityId)
+                .execType(execType)
+                .rejectReason(rejectReason == null ? RejectReason.NULL_VAL : rejectReason);
+        strategy.submitExecReport(report);
     }
 
     private void pass() throws Exception {

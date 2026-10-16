@@ -170,8 +170,13 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     @Override
     public final void onSequencedEvent(long globalSequence, int templateId, UnsafeBuffer buffer, int length)
             throws Exception {
-        // Still drained once the strategy is exiting, so nothing writing to these buffers waits on them.
+        // Still drained once the strategy is exiting, so nothing writing to these buffers waits on them; the
+        // wind-down reads the closes' outcomes.
         if (exiting) {
+            if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID && windDown != null) {
+                execReport.wrap(buffer);
+                windDown.onExecutionReport(execReport);
+            }
             return;
         }
         if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID) {
