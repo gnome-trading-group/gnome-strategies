@@ -1,6 +1,7 @@
 package group.gnometrading.strategies;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.Mbp10Schema;
@@ -10,7 +11,12 @@ import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.SchemaType;
 import group.gnometrading.sequencer.GlobalSequence;
 import group.gnometrading.sequencer.SequencedRingBuffer;
+import group.gnometrading.sequencer.metrics.ColumnarMetricRecorder;
+import group.gnometrading.sequencer.metrics.MetricRecorder;
+import group.gnometrading.sequencer.metrics.MetricStream;
+import group.gnometrading.sequencer.metrics.RecordBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +26,9 @@ class StrategyAgentTest {
     private static final class RecordingStrategy extends StrategyAgent {
         final List<SchemaType> types = new ArrayList<>();
         final List<Long> bids = new ArrayList<>();
+        int registrations;
+        MetricStream bidStream;
+        int bidColumn;
 
         RecordingStrategy() {
             super(
@@ -32,12 +41,25 @@ class StrategyAgentTest {
         }
 
         @Override
+        protected void registerMetrics(MetricRecorder metrics) {
+            registrations++;
+            bidStream = metrics.createStream("bids");
+            bidColumn = bidStream.addLongColumn("bid");
+            bidStream.freeze();
+        }
+
+        @Override
         protected void onMarketData(Schema data) {
             types.add(data.schemaType);
-            bids.add(
-                    data instanceof Mbp1Schema mbp1
-                            ? mbp1.decoder.bidPrice0()
-                            : ((Mbp10Schema) data).decoder.bidPrice0());
+            long bid = data instanceof Mbp1Schema mbp1
+                    ? mbp1.decoder.bidPrice0()
+                    : ((Mbp10Schema) data).decoder.bidPrice0();
+            bids.add(bid);
+            if (bidStream != null) {
+                bidStream.begin();
+                bidStream.setLong(bidColumn, bid);
+                bidStream.commit();
+            }
         }
 
         @Override
@@ -58,5 +80,24 @@ class StrategyAgentTest {
 
         assertEquals(List.of(SchemaType.MBP_10, SchemaType.MBP_1), strategy.types);
         assertEquals(List.of(100L, 200L), strategy.bids);
+    }
+
+    @Test
+    void theStrategyDeclaresItsMetricsOnceAndRecordsFromItsCallbacks() throws Exception {
+        RecordingStrategy strategy = new RecordingStrategy();
+        ColumnarMetricRecorder recorder = new ColumnarMetricRecorder(4);
+        strategy.configureMetrics(recorder);
+        Mbp10Schema mbp10 = new Mbp10Schema();
+        mbp10.encoder.bidPrice0(100);
+
+        strategy.submitMarketData(mbp10);
+        strategy.doWork();
+
+        RecordBuffer buffer = recorder.getBuffers().get(0);
+        assertEquals("bids", buffer.getName());
+        assertEquals(1, buffer.getCount());
+        assertEquals(100L, Arrays.copyOf(buffer.getLongColumn(0), 1)[0]);
+        assertThrows(IllegalStateException.class, () -> strategy.configureMetrics(MetricRecorder.discarding()));
+        assertEquals(1, strategy.registrations);
     }
 }

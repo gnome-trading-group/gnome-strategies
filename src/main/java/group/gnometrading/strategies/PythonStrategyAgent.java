@@ -8,6 +8,7 @@ import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.Schema;
 import group.gnometrading.sequencer.GlobalSequence;
 import group.gnometrading.sequencer.SequencedRingBuffer;
+import group.gnometrading.sequencer.metrics.MetricRecorder;
 import java.util.List;
 
 /**
@@ -47,6 +48,9 @@ public final class PythonStrategyAgent extends StrategyAgent {
          * which the strategy can end its session.
          */
         void onInit(PositionView positionView, SecurityMaster securityMaster, StrategyControl control);
+
+        /** Called once, after {@link #onInit}, with the recorder the strategy declares its metric streams in. */
+        void registerMetrics(MetricRecorder recorder);
     }
 
     private static volatile PythonStrategyCallback globalCallback;
@@ -125,6 +129,11 @@ public final class PythonStrategyAgent extends StrategyAgent {
     protected void onExecutionReport(OrderExecutionReport report) {
         List<Intent> intents = callback.onExecutionReport(report);
         publishIntents(intents);
+    }
+
+    @Override
+    protected void registerMetrics(MetricRecorder metrics) {
+        callback.registerMetrics(metrics);
     }
 
     @Override

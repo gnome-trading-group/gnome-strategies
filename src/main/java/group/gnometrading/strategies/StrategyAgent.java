@@ -15,6 +15,7 @@ import group.gnometrading.schemas.Schema;
 import group.gnometrading.sequencer.SequencedEventHandler;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
+import group.gnometrading.sequencer.metrics.MetricRecorder;
 import group.gnometrading.sm.Listing;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +38,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  *
  * <p>A strategy ends its own session through {@link #requestExit}: from then on its callbacks are no longer called,
  * and the agent takes it out of the market (see {@link WindDown}) before telling the session, which shuts down.
+ *
+ * <p>A strategy records metrics by declaring streams in {@link #registerMetrics}. Whoever runs it decides where they
+ * go: memory for a backtest, the session journal for a live or paper session.
  *
  * <p>In a backtest, {@link #simulateProcessingTime()} is the strategy's processing latency. The
  * driver uses measured wall-clock time instead only when the backtest config turns that on.
@@ -64,6 +68,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private WindDown windDown;
     // The strategy thread's own copy of exitRequest, so a pass reads the volatile once.
     private boolean exiting;
+    private boolean metricsConfigured;
 
     protected StrategyAgent(
             int strategyId,
@@ -145,6 +150,25 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     public final void configureExit(List<Listing> listings, ExitListener listener) {
         this.windDown = new WindDown(listings, positionView, this::publishIntent, listener);
     }
+
+    /**
+     * Gives the strategy the recorder its metrics go to, and has it declare its streams there through {@link
+     * #registerMetrics}. Called once before the agent starts, by the backtest driver or the orchestrator.
+     */
+    public final void configureMetrics(MetricRecorder recorder) {
+        if (metricsConfigured) {
+            throw new IllegalStateException("Strategy " + strategyId + " already has its metrics configured");
+        }
+        metricsConfigured = true;
+        registerMetrics(recorder);
+    }
+
+    /**
+     * Declares the strategy's metric streams: create each, add its columns and freeze it, keeping the streams to
+     * record into from the callbacks. Rows go wherever the recorder sends them, so the same code records in a
+     * backtest and a session. Does nothing unless overridden.
+     */
+    protected void registerMetrics(MetricRecorder metrics) {}
 
     @Override
     public final boolean requestExit(String reason, boolean flatten, long timeoutMillis) {
