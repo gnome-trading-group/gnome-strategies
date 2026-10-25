@@ -6,10 +6,6 @@ import static org.mockito.Mockito.*;
 
 import com.github.luben.zstd.ZstdInputStream;
 import group.gnometrading.logging.NullLogger;
-import group.gnometrading.schemas.SchemaType;
-import group.gnometrading.sm.Exchange;
-import group.gnometrading.sm.Listing;
-import group.gnometrading.sm.Security;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -36,15 +32,10 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 @ExtendWith(MockitoExtension.class)
 class RawDataCollectorTest {
 
-    private static final Listing LISTING = new Listing(
-            532,
-            new Exchange(151, "TEST_EXCHANGE", "test-exchange", "test-region", SchemaType.MBO),
-            new Security(499, "test-security", null, null, null, null, null, null, false, false, 0L, 0L, true, 0),
-            "id",
-            "id");
+    private static final int STREAM_ID = 499;
     private static final String BUCKET = "test-bucket";
     private static final Pattern KEY_PATTERN =
-            Pattern.compile("^499/151/\\d{4}/\\d{1,2}/\\d{1,2}/\\d{1,2}/\\d{1,2}/[a-f0-9-]{36}\\.zst$");
+            Pattern.compile("^499/raw/\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/[a-f0-9-]{36}\\.zst$");
 
     @Mock
     S3Client s3Client;
@@ -65,7 +56,7 @@ class RawDataCollectorTest {
                 new NullLogger(),
                 clock,
                 new CycleUploader(new NullLogger(), s3Client, Runnable::run),
-                LISTING,
+                STREAM_ID,
                 BUCKET,
                 false);
     }
@@ -227,8 +218,8 @@ class RawDataCollectorTest {
         String key = builder.build().key();
 
         assertTrue(KEY_PATTERN.matcher(key).matches(), "Key should match pattern: " + key);
-        assertTrue(key.startsWith("499/151/"), "Key should start with securityId/exchangeId");
-        assertTrue(key.contains("2025/4/1/12/34"), "Key should contain timestamp");
+        assertTrue(key.startsWith("499/raw/"), "Key should start with the stream");
+        assertTrue(key.contains("2025/04/01/12/34"), "Key should contain timestamp");
     }
 
     @Test

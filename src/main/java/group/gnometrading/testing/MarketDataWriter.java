@@ -3,13 +3,13 @@ package group.gnometrading.testing;
 import com.lmax.disruptor.EventHandler;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
-import group.gnometrading.schemas.Schema;
+import group.gnometrading.schemas.StreamRecord;
 import java.io.FileOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import org.agrona.ExpandableArrayBuffer;
 
-public final class MarketDataWriter implements EventHandler<Schema> {
+public final class MarketDataWriter implements EventHandler<StreamRecord> {
 
     private final ExpandableArrayBuffer purgatory;
     private final FileOutputStream outputStream;
@@ -31,7 +31,7 @@ public final class MarketDataWriter implements EventHandler<Schema> {
     }
 
     @Override
-    public void onEvent(Schema schema, long sequence, boolean endOfBatch) throws Exception {
+    public void onEvent(StreamRecord schema, long sequence, boolean endOfBatch) throws Exception {
         schema.buffer.getBytes(0, this.purgatory, 0, schema.totalMessageSize());
         this.outputStream.write(this.purgatory.byteArray(), 0, schema.totalMessageSize());
         this.messageCount++;

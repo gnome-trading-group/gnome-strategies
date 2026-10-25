@@ -7,8 +7,8 @@ import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.Mbp1Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
-import group.gnometrading.schemas.Schema;
-import group.gnometrading.schemas.SchemaType;
+import group.gnometrading.schemas.RecordType;
+import group.gnometrading.schemas.StreamRecord;
 import group.gnometrading.sequencer.GlobalSequence;
 import group.gnometrading.sequencer.SequencedRingBuffer;
 import group.gnometrading.sequencer.metrics.ColumnarMetricRecorder;
@@ -24,7 +24,7 @@ class StrategyAgentTest {
 
     /** Remembers the schema type and best bid of every market data update it is handed. */
     private static final class RecordingStrategy extends StrategyAgent {
-        final List<SchemaType> types = new ArrayList<>();
+        final List<RecordType> types = new ArrayList<>();
         final List<Long> bids = new ArrayList<>();
         int registrations;
         MetricStream bidStream;
@@ -49,8 +49,8 @@ class StrategyAgentTest {
         }
 
         @Override
-        protected void onMarketData(Schema data) {
-            types.add(data.schemaType);
+        protected void onMarketData(StreamRecord data) {
+            types.add(data.recordType);
             long bid = data instanceof Mbp1Schema mbp1
                     ? mbp1.decoder.bidPrice0()
                     : ((Mbp10Schema) data).decoder.bidPrice0();
@@ -78,7 +78,7 @@ class StrategyAgentTest {
         strategy.submitMarketData(mbp1);
         strategy.doWork();
 
-        assertEquals(List.of(SchemaType.MBP_10, SchemaType.MBP_1), strategy.types);
+        assertEquals(List.of(RecordType.MBP_10, RecordType.MBP_1), strategy.types);
         assertEquals(List.of(100L, 200L), strategy.bids);
     }
 

@@ -12,8 +12,8 @@ import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderType;
 import group.gnometrading.schemas.RejectReason;
-import group.gnometrading.schemas.Schema;
 import group.gnometrading.schemas.Side;
+import group.gnometrading.schemas.StreamRecord;
 import group.gnometrading.sequencer.GlobalSequence;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
@@ -64,7 +64,7 @@ class StrategyExitTest {
         }
 
         @Override
-        protected void onMarketData(Schema data) {
+        protected void onMarketData(StreamRecord data) {
             marketData++;
         }
 
@@ -362,7 +362,7 @@ class StrategyExitTest {
     private static Listing listing(int listingId, int exchangeId, int securityId) {
         return new Listing(
                 listingId,
-                new Exchange(exchangeId, "EX" + exchangeId, "Exchange", "us-east-1", null),
+                new Exchange(exchangeId, "EX" + exchangeId, "Exchange", "us-east-1"),
                 new Security(securityId, "SEC", null, null, null, "USD", "USD", "USD", false, false, 0, 0, true, 0),
                 String.valueOf(securityId),
                 "SEC");

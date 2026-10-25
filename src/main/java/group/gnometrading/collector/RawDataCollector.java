@@ -1,16 +1,15 @@
 package group.gnometrading.collector;
 
 import group.gnometrading.annotations.VisibleForTesting;
+import group.gnometrading.data.StreamEntry;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
-import group.gnometrading.sm.Listing;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 public final class RawDataCollector implements Closeable {
@@ -24,8 +23,8 @@ public final class RawDataCollector implements Closeable {
     // The socket buffer is direct, and the zstd stream only takes arrays; grown on the rare oversized message.
     private byte[] payloadScratch = new byte[INITIAL_PAYLOAD_SCRATCH];
 
-    public RawDataCollector(Logger logger, Clock clock, CycleUploader uploader, Listing listing, String bucketName) {
-        this(logger, clock, uploader, listing, bucketName, true);
+    public RawDataCollector(Logger logger, Clock clock, CycleUploader uploader, int streamId, String bucketName) {
+        this(logger, clock, uploader, streamId, bucketName, true);
     }
 
     @VisibleForTesting
@@ -33,7 +32,7 @@ public final class RawDataCollector implements Closeable {
             Logger logger,
             Clock clock,
             CycleUploader uploader,
-            Listing listing,
+            int streamId,
             String bucketName,
             boolean attachShutdownHook) {
         this.logger = logger;
@@ -42,7 +41,7 @@ public final class RawDataCollector implements Closeable {
                 logger,
                 uploader,
                 bucketName,
-                ts -> buildS3Key(listing, ts),
+                ts -> StreamEntry.rawCaptureKey(streamId, ts, UUID.randomUUID().toString()),
                 clock.getZone(),
                 Duration.ofMinutes(1),
                 CycleManager.epochNanos(clock.instant()),
@@ -88,18 +87,5 @@ public final class RawDataCollector implements Closeable {
     @Override
     public void close() throws IOException {
         cycleManager.close();
-    }
-
-    private static String buildS3Key(Listing listing, LocalDateTime timestamp) {
-        return String.format(
-                "%d/%d/%d/%d/%d/%d/%d/%s.zst",
-                listing.security().securityId(),
-                listing.exchange().exchangeId(),
-                timestamp.getYear(),
-                timestamp.getMonthValue(),
-                timestamp.getDayOfMonth(),
-                timestamp.getHour(),
-                timestamp.getMinute(),
-                UUID.randomUUID().toString());
     }
 }

@@ -2,7 +2,12 @@ package group.gnometrading.books;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import group.gnometrading.schemas.*;
+import group.gnometrading.schemas.book.Action;
+import group.gnometrading.schemas.book.MboDecoder;
+import group.gnometrading.schemas.book.MboEncoder;
+import group.gnometrading.schemas.book.MessageHeaderDecoder;
+import group.gnometrading.schemas.book.MessageHeaderEncoder;
+import group.gnometrading.schemas.book.Side;
 import java.util.stream.Stream;
 import org.agrona.ExpandableDirectByteBuffer;
 import org.agrona.MutableDirectBuffer;

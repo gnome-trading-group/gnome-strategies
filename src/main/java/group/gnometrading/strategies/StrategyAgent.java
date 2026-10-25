@@ -3,15 +3,14 @@ package group.gnometrading.strategies;
 import group.gnometrading.SecurityMaster;
 import group.gnometrading.concurrent.GnomeAgent;
 import group.gnometrading.concurrent.ThreadProfile;
+import group.gnometrading.md.StreamDirectory;
 import group.gnometrading.oms.position.PositionView;
+import group.gnometrading.schemas.Family;
 import group.gnometrading.schemas.Intent;
-import group.gnometrading.schemas.Mbp10Decoder;
-import group.gnometrading.schemas.Mbp10Schema;
-import group.gnometrading.schemas.Mbp1Decoder;
-import group.gnometrading.schemas.Mbp1Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderExecutionReportDecoder;
-import group.gnometrading.schemas.Schema;
+import group.gnometrading.schemas.RecordType;
+import group.gnometrading.schemas.StreamRecord;
 import group.gnometrading.sequencer.SequencedEventHandler;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
@@ -56,10 +55,11 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private final SecurityMaster securityMaster;
     private final int strategyId;
 
-    // Pre-allocated flyweights for zero-alloc reads
-    private final Mbp10Schema mbp10 = new Mbp10Schema();
-    private final Mbp1Schema mbp1 = new Mbp1Schema();
+    // Pre-allocated flyweights for zero-alloc reads: one per stream record type, by template id.
+    private final StreamRecord[] records = RecordType.newRecordsByTemplateId();
     private final OrderExecutionReport execReport = new OrderExecutionReport();
+    // The streams this strategy reads and the listings they carry; set before the agent starts.
+    private StreamDirectory streams;
 
     private final EpochNanoClock nanoClock;
 
@@ -116,6 +116,14 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
         return positionView;
     }
 
+    /**
+     * The streams this strategy reads and the listings they carry. Market data names only its stream; resolve it to
+     * a listing here, and an execution report's exchange and security to the same listing.
+     */
+    protected final StreamDirectory streams() {
+        return streams;
+    }
+
     /** Read-only access to the security master for listing lookups. */
     protected final SecurityMaster getSecurityMaster() {
         return securityMaster;
@@ -150,6 +158,18 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     public final void configureExit(List<Listing> listings, ExitListener listener) {
         this.windDown = new WindDown(listings, positionView, this::publishIntent, listener);
     }
+
+    /**
+     * Gives the strategy the streams it reads and the listings they carry. Called once before the agent starts, by
+     * the backtest driver or the orchestrator.
+     */
+    public final void configureStreams(StreamDirectory directory) {
+        this.streams = directory;
+        onStreamsConfigured(directory);
+    }
+
+    /** Called once the strategy's streams are known. Does nothing unless overridden. */
+    protected void onStreamsConfigured(StreamDirectory directory) {}
 
     /**
      * Gives the strategy the recorder its metrics go to, and has it declare its streams there through {@link
@@ -189,7 +209,8 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     /**
      * {@inheritDoc}
      *
-     * <p>Dispatches to {@link #onMarketData} or {@link #onExecutionReport} based on templateId.
+     * <p>Dispatches execution reports to {@link #onExecutionReport}, book records to {@link #onMarketData} and every
+     * other stream record to {@link #onStreamEvent}. Nothing else is written to a strategy's buffers.
      */
     @Override
     public final void onSequencedEvent(long globalSequence, int templateId, UnsafeBuffer buffer, int length)
@@ -206,17 +227,22 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
         if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID) {
             execReport.wrap(buffer);
             onExecutionReport(execReport);
-        } else if (templateId == Mbp10Decoder.TEMPLATE_ID) {
-            mbp10.wrap(buffer);
-            onMarketData(mbp10);
-        } else if (templateId == Mbp1Decoder.TEMPLATE_ID) {
-            mbp1.wrap(buffer);
-            onMarketData(mbp1);
+        } else if (templateId < records.length && records[templateId] != null) {
+            StreamRecord record = records[templateId];
+            record.wrap(buffer);
+            if (record.recordType.family() == Family.BOOK) {
+                onMarketData(record);
+            } else {
+                onStreamEvent(record.streamId(), record);
+            }
         }
     }
 
-    /** Called when a market data update arrives. Implement trading logic here. */
-    protected abstract void onMarketData(Schema data);
+    /** Called when a book record (a venue listing's market data) arrives. Implement trading logic here. */
+    protected abstract void onMarketData(StreamRecord data);
+
+    /** Called when a record of any other stream (a vendor feed, say) arrives. Does nothing unless overridden. */
+    protected void onStreamEvent(int streamId, StreamRecord record) {}
 
     /** Called when an execution report arrives. React to fills here. */
     protected abstract void onExecutionReport(OrderExecutionReport report);
@@ -230,7 +256,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     protected final void publishIntent(Intent intent) {
         intent.encoder.timestampSend(nanoClock.nanoTime());
         intent.encoder.strategyId((short) strategyId);
-        intentBuffer.publishRaw(intent.buffer, intent.messageHeaderDecoder.templateId(), intent.totalMessageSize());
+        intentBuffer.publishRaw(intent.buffer, intent.templateId(), intent.totalMessageSize());
     }
 
     /**
@@ -258,8 +284,8 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      * <p>In production this is done by a gateway/socket-reader agent. In backtest it is called
      * directly by the driver before {@link #doWork()}.
      */
-    public final void submitMarketData(Schema schema) {
-        marketDataBuffer.publishRaw(schema.buffer, schema.messageHeaderDecoder.templateId(), schema.totalMessageSize());
+    public final void submitMarketData(StreamRecord schema) {
+        marketDataBuffer.publishRaw(schema.buffer, schema.templateId(), schema.totalMessageSize());
     }
 
     /**
@@ -269,7 +295,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      * the driver before {@link #doWork()}.
      */
     public final void submitExecReport(OrderExecutionReport report) {
-        execReportBuffer.publishRaw(report.buffer, report.messageHeaderDecoder.templateId(), report.totalMessageSize());
+        execReportBuffer.publishRaw(report.buffer, report.templateId(), report.totalMessageSize());
     }
 
     /**

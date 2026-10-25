@@ -1,7 +1,7 @@
 package group.gnometrading;
 
 import group.gnometrading.books.MboBook;
-import group.gnometrading.schemas.MboDecoder;
+import group.gnometrading.schemas.book.MboDecoder;
 import org.agrona.DirectBuffer;
 
 public abstract class MboBookStrategy {

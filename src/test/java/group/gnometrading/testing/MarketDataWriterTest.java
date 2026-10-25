@@ -3,8 +3,8 @@ package group.gnometrading.testing;
 import static org.junit.jupiter.api.Assertions.*;
 
 import group.gnometrading.logging.NullLogger;
-import group.gnometrading.schemas.Schema;
-import group.gnometrading.schemas.SchemaType;
+import group.gnometrading.schemas.RecordType;
+import group.gnometrading.schemas.StreamRecord;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -188,17 +188,17 @@ class MarketDataWriterTest {
      * Test schema implementation for testing purposes.
      * Creates a schema with a fixed message size and allows setting custom data.
      */
-    private static class TestSchema extends Schema {
+    private static class TestSchema extends StreamRecord {
         private static final int MESSAGE_SIZE = 128; // Fixed size for testing
 
         public TestSchema(String data) {
-            super(SchemaType.MBP_10);
+            super(RecordType.MBP_10);
             byte[] bytes = data.getBytes();
             this.buffer.putBytes(0, bytes, 0, Math.min(bytes.length, MESSAGE_SIZE));
         }
 
         public TestSchema(byte[] data) {
-            super(SchemaType.MBP_10);
+            super(RecordType.MBP_10);
             this.buffer.putBytes(0, data, 0, Math.min(data.length, MESSAGE_SIZE));
         }
 
@@ -212,16 +212,6 @@ class MarketDataWriterTest {
 
         @Override
         protected int getSbeVersion() {
-            return 0;
-        }
-
-        @Override
-        public long getSequenceNumber() {
-            return 0;
-        }
-
-        @Override
-        public long getEventTimestamp() {
             return 0;
         }
     }

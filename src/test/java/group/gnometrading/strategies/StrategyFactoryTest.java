@@ -8,7 +8,7 @@ import group.gnometrading.SecurityMaster;
 import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.OrderExecutionReport;
-import group.gnometrading.schemas.Schema;
+import group.gnometrading.schemas.StreamRecord;
 import group.gnometrading.sequencer.SequencedRingBuffer;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +44,7 @@ class StrategyFactoryTest {
         }
 
         @Override
-        protected void onMarketData(Schema data) {}
+        protected void onMarketData(StreamRecord data) {}
 
         @Override
         protected void onExecutionReport(OrderExecutionReport report) {}

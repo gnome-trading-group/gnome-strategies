@@ -6,8 +6,8 @@ import group.gnometrading.collections.LongMap;
 import group.gnometrading.pools.Pool;
 import group.gnometrading.pools.PoolNode;
 import group.gnometrading.pools.SingleThreadedObjectPool;
-import group.gnometrading.schemas.MboDecoder;
-import group.gnometrading.schemas.Side;
+import group.gnometrading.schemas.book.MboDecoder;
+import group.gnometrading.schemas.book.Side;
 
 public final class MboBook {
 

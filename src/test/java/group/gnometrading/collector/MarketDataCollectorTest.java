@@ -6,11 +6,11 @@ import static org.mockito.Mockito.*;
 
 import com.github.luben.zstd.ZstdInputStream;
 import group.gnometrading.logging.NullLogger;
-import group.gnometrading.schemas.Schema;
-import group.gnometrading.schemas.SchemaType;
-import group.gnometrading.sm.Exchange;
-import group.gnometrading.sm.Listing;
-import group.gnometrading.sm.Security;
+import group.gnometrading.schemas.RecordType;
+import group.gnometrading.schemas.SbeMessage;
+import group.gnometrading.schemas.Statics;
+import group.gnometrading.schemas.StreamHeader;
+import group.gnometrading.schemas.StreamRecord;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.Clock;
@@ -38,15 +38,10 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 @ExtendWith(MockitoExtension.class)
 class MarketDataCollectorTest {
 
-    private static final Listing LISTING = new Listing(
-            532,
-            new Exchange(151, "TEST_EXCHANGE", "test-exchange", "test-region", SchemaType.MBO),
-            new Security(499, "test-security", null, null, null, null, null, null, false, false, 0L, 0L, true, 0),
-            "id",
-            "id");
+    private static final int STREAM_ID = 499;
     private static final String OUTPUT_BUCKET = "test-bucket";
     private static final Pattern KEY_PATTERN =
-            Pattern.compile("^499/151/\\d{4}/\\d{1,2}/\\d{1,2}/\\d{1,2}/\\d{1,2}/mbo/[a-f0-9]{8}\\.zst$");
+            Pattern.compile("^499/book/mbp-10/\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/[a-f0-9]{8}\\.zst$");
 
     @Mock
     S3Client s3Client;
@@ -113,8 +108,8 @@ class MarketDataCollectorTest {
         builders.get(1).accept(builder2);
         PutObjectRequest request2 = builder2.build();
 
-        assertTrue(request1.key().contains("2025/4/1/12/0"), "First key should contain timestamp 2025/4/1/12/0");
-        assertTrue(request2.key().contains("2025/4/1/12/1"), "Second key should contain timestamp 2025/4/1/12/1");
+        assertTrue(request1.key().contains("2025/04/01/12/00"), "First key should contain timestamp 2025/04/01/12/00");
+        assertTrue(request2.key().contains("2025/04/01/12/01"), "Second key should contain timestamp 2025/04/01/12/01");
     }
 
     @Test
@@ -137,7 +132,7 @@ class MarketDataCollectorTest {
         PutObjectRequest.Builder builder = PutObjectRequest.builder();
         requestBuilderCaptor.getValue().accept(builder);
         PutObjectRequest request = builder.build();
-        assertTrue(request.key().contains("2025/4/1/12/0"), "Key should be for 12:00 minute");
+        assertTrue(request.key().contains("2025/04/01/12/00"), "Key should be for 12:00 minute");
     }
 
     @Test
@@ -195,9 +190,8 @@ class MarketDataCollectorTest {
         String key = request.key();
 
         assertTrue(KEY_PATTERN.matcher(key).matches(), "Key should match pattern: " + key);
-        assertTrue(key.startsWith("499/151/"), "Key should start with securityId/exchangeId");
-        assertTrue(key.contains("2025/4/1/12/34"), "Key should contain timestamp 2025/4/1/12/34");
-        assertTrue(key.contains("/mbo/"), "Key should contain schema type");
+        assertTrue(key.startsWith("499/book/mbp-10/"), "Key should start with the stream, family and record");
+        assertTrue(key.contains("2025/04/01/12/34"), "Key should contain timestamp 2025/04/01/12/34");
         assertTrue(key.endsWith(".zst"), "Key should end with .zst");
 
         assertEquals(OUTPUT_BUCKET, request.bucket());
@@ -235,8 +229,8 @@ class MarketDataCollectorTest {
         String key1 = request1.key();
         String key2 = request2.key();
         assertNotEquals(key1, key2, "Keys should be different for different minutes");
-        assertTrue(key1.contains("2025/4/1/12/0"), "First key should be for minute 12:00");
-        assertTrue(key2.contains("2025/4/1/12/1"), "Second key should be for minute 12:01");
+        assertTrue(key1.contains("2025/04/01/12/00"), "First key should be for minute 12:00");
+        assertTrue(key2.contains("2025/04/01/12/01"), "Second key should be for minute 12:01");
     }
 
     @Test
@@ -427,8 +421,8 @@ class MarketDataCollectorTest {
 
         String key1 = b1.build().key();
         String key2 = b2.build().key();
-        assertTrue(key1.contains("12/0") || key2.contains("12/0"), "One upload should be for 12:00");
-        assertTrue(key1.contains("12/1") || key2.contains("12/1"), "One upload should be for 12:01");
+        assertTrue(key1.contains("12/00/") || key2.contains("12/00/"), "One upload should be for 12:00");
+        assertTrue(key1.contains("12/01/") || key2.contains("12/01/"), "One upload should be for 12:01");
     }
 
     @Test
@@ -497,13 +491,15 @@ class MarketDataCollectorTest {
                 new NullLogger(),
                 clock,
                 new CycleUploader(new NullLogger(), s3Client, Runnable::run),
-                LISTING,
+                STREAM_ID,
+                RecordType.MBP_10,
                 OUTPUT_BUCKET,
                 false,
                 gracePeriod);
     }
 
-    private Schema bufWithTimestamp(String input, int year, int month, int day, int hour, int minute, int second) {
+    private StreamRecord bufWithTimestamp(
+            String input, int year, int month, int day, int hour, int minute, int second) {
         Instant instant =
                 LocalDateTime.of(year, month, day, hour, minute, second).toInstant(UTC);
         long nanos = instant.getEpochSecond() * 1_000_000_000L + instant.getNano();
@@ -524,18 +520,25 @@ class MarketDataCollectorTest {
                         LocalDateTime.of(year, month, day, hour, minute, second).toInstant(UTC));
     }
 
-    private static class DummySchema extends Schema {
-        private final long eventTimestamp;
+    private static class DummySchema extends StreamRecord {
+        private final int blockLength;
 
         public DummySchema(String input, long eventTimestamp) {
-            super(SchemaType.MBP_10);
-            this.eventTimestamp = eventTimestamp;
-            this.buffer.putBytes(0, input.getBytes());
+            this(input.getBytes(), eventTimestamp);
+        }
+
+        private DummySchema(byte[] input, long eventTimestamp) {
+            super(RecordType.MBP_10);
+            this.blockLength = StreamHeader.LENGTH + input.length;
+            this.buffer.wrap(new byte[SbeMessage.HEADER_LENGTH + this.blockLength]);
+            this.buffer.putLong(
+                    SbeMessage.HEADER_LENGTH + StreamHeader.TIMESTAMP_EVENT_OFFSET, eventTimestamp, Statics.BYTE_ORDER);
+            this.buffer.putBytes(SbeMessage.HEADER_LENGTH + StreamHeader.LENGTH, input);
         }
 
         @Override
         protected int getEncodedBlockLength() {
-            return 0;
+            return blockLength;
         }
 
         @Override
@@ -544,16 +547,6 @@ class MarketDataCollectorTest {
         @Override
         protected int getSbeVersion() {
             return 0;
-        }
-
-        @Override
-        public long getSequenceNumber() {
-            return 0;
-        }
-
-        @Override
-        public long getEventTimestamp() {
-            return eventTimestamp;
         }
     }
 }

@@ -1,11 +1,12 @@
 package group.gnometrading.strategies;
 
 import group.gnometrading.SecurityMaster;
+import group.gnometrading.md.StreamDirectory;
 import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
-import group.gnometrading.schemas.Schema;
+import group.gnometrading.schemas.StreamRecord;
 import group.gnometrading.sequencer.GlobalSequence;
 import group.gnometrading.sequencer.SequencedRingBuffer;
 import group.gnometrading.sequencer.metrics.MetricRecorder;
@@ -34,8 +35,16 @@ public final class PythonStrategyAgent extends StrategyAgent {
      * buffer by {@link PythonStrategyAgent}.
      */
     public interface PythonStrategyCallback {
-        /** Called on each market data update. Returns intents to submit. */
-        List<Intent> onMarketData(Schema data);
+        /** Called on each book record (a venue listing's market data). Returns intents to submit. */
+        List<Intent> onMarketData(StreamRecord data);
+
+        /** Called on each record of any other stream (a vendor feed, say). Returns intents to submit; none by default. */
+        default List<Intent> onStreamEvent(int streamId, StreamRecord record) {
+            return List.of();
+        }
+
+        /** Called once, before any data, with the streams the strategy reads and the listings they carry. */
+        default void onStreams(StreamDirectory streams) {}
 
         /** Called on each execution report. Returns intents to submit in response. */
         List<Intent> onExecutionReport(OrderExecutionReport report);
@@ -120,9 +129,20 @@ public final class PythonStrategyAgent extends StrategyAgent {
     }
 
     @Override
-    protected void onMarketData(Schema data) {
+    protected void onMarketData(StreamRecord data) {
         List<Intent> intents = callback.onMarketData(data);
         publishIntents(intents);
+    }
+
+    @Override
+    protected void onStreamEvent(int streamId, StreamRecord record) {
+        List<Intent> intents = callback.onStreamEvent(streamId, record);
+        publishIntents(intents);
+    }
+
+    @Override
+    protected void onStreamsConfigured(StreamDirectory directory) {
+        callback.onStreams(directory);
     }
 
     @Override
