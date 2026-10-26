@@ -280,32 +280,16 @@ class MarketDataCollectorTest {
     }
 
     @Test
-    void testWaitForCycleAndCloseWaitsUntilCycleFlips() throws Exception {
+    void flushUploadsThePartialMinute() throws Exception {
+        List<byte[]> capturedData = captureUploads();
         date(2025, 4, 1, 12, 0, 0);
         MarketDataCollector collector = collector(Duration.ZERO);
-
         collector.onEvent(bufWithTimestamp("data1", 2025, 4, 1, 12, 0, 10), 0, false);
 
-        Thread shutdownThread = new Thread(() -> {
-            try {
-                collector.waitForCycleAndClose();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        shutdownThread.start();
+        collector.flush();
 
-        Thread.sleep(50);
-
-        assertTrue(shutdownThread.isAlive(), "Shutdown thread should still be waiting for cycle to flip");
-
-        collector.onEvent(bufWithTimestamp("data2", 2025, 4, 1, 12, 1, 5), 1, false);
-
-        shutdownThread.join(5000);
-        assertFalse(shutdownThread.isAlive(), "Shutdown thread should have completed after cycle flip");
-
-        verify(s3Client, times(1))
-                .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
+        assertTrue(decompressZstd(capturedData.get(0)).contains("data1"));
     }
 
     @Test
@@ -370,59 +354,22 @@ class MarketDataCollectorTest {
     }
 
     @Test
-    void testShutdownUploadsBothBuffers() throws Exception {
-        List<byte[]> capturedData = new ArrayList<>();
-        ArgumentCaptor<Consumer<PutObjectRequest.Builder>> keyCaptor = ArgumentCaptor.forClass(Consumer.class);
-
-        when(s3Client.putObject(keyCaptor.capture(), any(RequestBody.class))).thenAnswer(invocation -> {
-            RequestBody body = invocation.getArgument(1);
-            byte[] data = body.contentStreamProvider().newStream().readAllBytes();
-            capturedData.add(data);
-            return PutObjectResponse.builder().build();
-        });
-
+    void flushUploadsTheMinuteInItsGracePeriodAndThePartialOne() throws Exception {
+        List<byte[]> capturedData = captureUploads();
         date(2025, 4, 1, 12, 0, 0);
-        // Long grace period so previous buffer stays open until shutdown
+        // Long grace period so the previous minute is still open when the stream stops.
         MarketDataCollector collector = collector(Duration.ofSeconds(30));
-
         collector.onEvent(bufWithTimestamp("min0", 2025, 4, 1, 12, 0, 30), 0, false);
-
-        // Rotation: 12:00 becomes previous, 12:01 becomes current
         collector.onEvent(bufWithTimestamp("min1", 2025, 4, 1, 12, 1, 2), 1, false);
-
-        // No uploads yet (grace period not expired)
         verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
 
-        // Trigger shutdown
-        Thread shutdownThread = new Thread(() -> {
-            try {
-                collector.waitForCycleAndClose();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        shutdownThread.start();
-        Thread.sleep(50);
+        collector.flush();
+        collector.onEvent(bufWithTimestamp("after", 2025, 4, 1, 12, 1, 3), 2, false);
 
-        // Send an event that triggers the next rotation (triggers shutdown path)
-        collector.onEvent(bufWithTimestamp("min2", 2025, 4, 1, 12, 2, 1), 2, false);
-
-        shutdownThread.join(5000);
-        assertFalse(shutdownThread.isAlive(), "Shutdown should complete");
-
-        // Both 12:00 and 12:01 buffers should be uploaded
         verify(s3Client, times(2)).putObject(any(Consumer.class), any(RequestBody.class));
-
-        List<Consumer<PutObjectRequest.Builder>> keys = keyCaptor.getAllValues();
-        PutObjectRequest.Builder b1 = PutObjectRequest.builder();
-        keys.get(0).accept(b1);
-        PutObjectRequest.Builder b2 = PutObjectRequest.builder();
-        keys.get(1).accept(b2);
-
-        String key1 = b1.build().key();
-        String key2 = b2.build().key();
-        assertTrue(key1.contains("12/00/") || key2.contains("12/00/"), "One upload should be for 12:00");
-        assertTrue(key1.contains("12/01/") || key2.contains("12/01/"), "One upload should be for 12:01");
+        assertTrue(decompressZstd(capturedData.get(0)).contains("min0"));
+        assertTrue(decompressZstd(capturedData.get(1)).contains("min1"));
+        assertFalse(decompressZstd(capturedData.get(1)).contains("after"), "nothing is written after a flush");
     }
 
     @Test
@@ -486,15 +433,26 @@ class MarketDataCollectorTest {
         assertFalse(decompressed0.contains("toolate"), "Too-late event should not be in the 12:00 file");
     }
 
+    private List<byte[]> captureUploads() {
+        List<byte[]> uploads = new ArrayList<>();
+        when(s3Client.putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class)))
+                .thenAnswer(invocation -> {
+                    RequestBody body = invocation.getArgument(1);
+                    uploads.add(body.contentStreamProvider().newStream().readAllBytes());
+                    return PutObjectResponse.builder().build();
+                });
+        return uploads;
+    }
+
     private MarketDataCollector collector(Duration gracePeriod) {
         return new MarketDataCollector(
                 new NullLogger(),
                 clock,
                 new CycleUploader(new NullLogger(), s3Client, Runnable::run),
+                new DirectBufferPool(),
                 STREAM_ID,
                 RecordType.MBP_10,
                 OUTPUT_BUCKET,
-                false,
                 gracePeriod);
     }
 

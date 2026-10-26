@@ -32,10 +32,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 @ExtendWith(MockitoExtension.class)
 class RawDataCollectorTest {
 
-    private static final int STREAM_ID = 499;
     private static final String BUCKET = "test-bucket";
     private static final Pattern KEY_PATTERN =
-            Pattern.compile("^499/raw/\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/[a-f0-9-]{36}\\.zst$");
+            Pattern.compile("^raw/KALSHI/shard-1/KALSHI-0/\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/[a-f0-9-]{36}\\.zst$");
 
     @Mock
     S3Client s3Client;
@@ -56,9 +55,11 @@ class RawDataCollectorTest {
                 new NullLogger(),
                 clock,
                 new CycleUploader(new NullLogger(), s3Client, Runnable::run),
-                STREAM_ID,
-                BUCKET,
-                false);
+                new DirectBufferPool(),
+                "KALSHI",
+                "shard-1",
+                "KALSHI-0",
+                BUCKET);
     }
 
     private ByteBuffer buf(String payload) {
@@ -218,33 +219,18 @@ class RawDataCollectorTest {
         String key = builder.build().key();
 
         assertTrue(KEY_PATTERN.matcher(key).matches(), "Key should match pattern: " + key);
-        assertTrue(key.startsWith("499/raw/"), "Key should start with the stream");
+        assertTrue(key.startsWith("raw/KALSHI/shard-1/KALSHI-0/"), "Key should start with the connection");
         assertTrue(key.contains("2025/04/01/12/34"), "Key should contain timestamp");
     }
 
     @Test
-    void testWaitForCycleAndClose() throws Exception {
+    void flushUploadsThePartialMinute() {
         date(2025, 4, 1, 12, 0, 0);
         RawDataCollector collector = collector();
-
         collector.capture(nanos(2025, 4, 1, 12, 0, 10), buf("data"));
 
-        Thread shutdownThread = new Thread(() -> {
-            try {
-                collector.waitForCycleAndClose();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        shutdownThread.start();
-        Thread.sleep(50);
+        collector.flush();
 
-        assertTrue(shutdownThread.isAlive(), "Should block waiting for rotation");
-
-        collector.capture(nanos(2025, 4, 1, 12, 1, 1), buf("trigger"));
-
-        shutdownThread.join(5000);
-        assertFalse(shutdownThread.isAlive(), "Should complete after rotation");
         verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
     }
 }

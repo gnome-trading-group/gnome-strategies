@@ -11,6 +11,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntSupplier;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -30,10 +31,21 @@ import software.amazon.awssdk.services.s3.S3Client;
  * which on a small CPU allocation starves the socket readers and delays their receive timestamps.
  * Uploads are therefore spaced out: a backlog that fits in {@link #DRAIN_WINDOW_NANOS} at {@link
  * #MAX_SPACING_NANOS} apart is spread across it, and a larger one is spaced more tightly.
+ *
+ * <p>A failed upload is retried after {@link #RETRY_BACKOFF_NANOS}; one that still fails is dropped and counted. With
+ * one copy of each stream a lost file is a coverage gap the inventory shows, so it isn't kept on disk. Every file's
+ * buffers go back to the pool once it is done with, uploaded or not.
+ *
+ * <p>The owner closes it last when the process stops, after every collector has flushed.
  */
 public final class CycleUploader implements Closeable {
 
-    private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
+    private static final long SHUTDOWN_TIMEOUT_SECONDS = 45;
+    static final long[] RETRY_BACKOFF_NANOS = {
+        TimeUnit.SECONDS.toNanos(1), TimeUnit.SECONDS.toNanos(5), TimeUnit.SECONDS.toNanos(30)
+    };
+    // Stopping: the stop timeout leaves no room for long waits, so retries come quickly.
+    static final long CLOSING_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(1);
     static final long DRAIN_WINDOW_NANOS = TimeUnit.SECONDS.toNanos(20);
     static final long MAX_SPACING_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
 
@@ -44,6 +56,10 @@ public final class CycleUploader implements Closeable {
     private final IntSupplier queuedUploads;
     private final Sleeper sleeper;
     private volatile boolean closing;
+    private final AtomicLong failedUploads = new AtomicLong();
+    // When the upload in progress started, retries included; 0 while none is. Lets a health check tell an uploader
+    // that is working through a backlog from one stuck on a single file.
+    private volatile long uploadStartedNanos;
 
     public CycleUploader(Logger logger, S3Client s3Client) {
         this(logger, s3Client, newUploaderExecutor());
@@ -76,11 +92,6 @@ public final class CycleUploader implements Closeable {
         this.ownedExecutor = ownedExecutor;
         this.queuedUploads = queuedUploads;
         this.sleeper = sleeper;
-        if (ownedExecutor != null) {
-            // Collectors' own shutdown hooks still hand over their last cycles after this runs; those
-            // are rejected and uploaded inline, while everything already queued is drained here.
-            Runtime.getRuntime().addShutdownHook(new Thread(this::close, "cycle-uploader-shutdown"));
-        }
     }
 
     private static ThreadPoolExecutor newUploaderExecutor() {
@@ -110,16 +121,54 @@ public final class CycleUploader implements Closeable {
     }
 
     void uploadNow(CycleBuffer cycle, String bucketName) {
+        uploadStartedNanos = System.nanoTime();
         try {
-            cycle.upload(s3Client, bucketName, logger);
-        } catch (IOException | RuntimeException e) {
-            logger.logf(
-                    LogMessage.UNKNOWN_ERROR,
-                    "Failed to upload %s to %s: %s",
-                    cycle.s3Key(),
-                    bucketName,
-                    e.getMessage());
+            for (int attempt = 0; ; attempt++) {
+                try {
+                    cycle.upload(s3Client, bucketName, logger);
+                    return;
+                } catch (IOException | RuntimeException e) {
+                    if (attempt == RETRY_BACKOFF_NANOS.length) {
+                        failedUploads.incrementAndGet();
+                        logger.logf(
+                                LogMessage.UNKNOWN_ERROR,
+                                "Dropped %s after %d failed uploads to %s: %s",
+                                cycle.s3Key(),
+                                attempt + 1,
+                                bucketName,
+                                e);
+                        return;
+                    }
+                    logger.logf(
+                            LogMessage.UNKNOWN_ERROR,
+                            "Upload %d of %s to %s failed, retrying: %s",
+                            attempt + 1,
+                            cycle.s3Key(),
+                            bucketName,
+                            e);
+                    sleeper.sleep(closing ? CLOSING_BACKOFF_NANOS : RETRY_BACKOFF_NANOS[attempt]);
+                }
+            }
+        } finally {
+            uploadStartedNanos = 0;
+            cycle.release();
         }
+    }
+
+    /** Files dropped after every retry failed, since the process started. */
+    public long failedUploads() {
+        return failedUploads.get();
+    }
+
+    /** Whether one upload has been in progress, retries included, for longer than {@code maxNanos}. */
+    public boolean isStuck(final long nowNanos, final long maxNanos) {
+        final long started = uploadStartedNanos;
+        return started != 0 && nowNanos - started > maxNanos;
+    }
+
+    /** Files waiting for the uploader thread. */
+    public int queuedUploads() {
+        return queuedUploads.getAsInt();
     }
 
     private void pace() {

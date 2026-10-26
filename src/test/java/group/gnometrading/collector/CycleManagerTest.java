@@ -46,19 +46,13 @@ class CycleManagerTest {
         return new CycleManager(
                 new NullLogger(),
                 new CycleUploader(new NullLogger(), s3Client, Runnable::run),
+                new DirectBufferPool(),
                 BUCKET,
                 ts -> ts + ".zst",
                 ZoneOffset.UTC,
                 Duration.ofMinutes(1),
                 nanos(MINUTE_0),
-                gracePeriod,
-                false);
-    }
-
-    @Test
-    void testRotateReturnsFalseNormally() throws IOException {
-        CycleManager manager = manager(Duration.ZERO);
-        assertFalse(manager.rotate(nanos(MINUTE_1)));
+                gracePeriod);
     }
 
     @Test
@@ -102,10 +96,10 @@ class CycleManagerTest {
         });
 
         CycleManager manager = manager(Duration.ofSeconds(30));
-        manager.currentOutputStream().write("minute0".getBytes());
+        CycleBufferTest.write(manager.currentCycle(), "minute0".getBytes());
 
         manager.rotate(nanos(MINUTE_1));
-        manager.resolveTarget(nanos(MINUTE_0)).write("late".getBytes());
+        CycleBufferTest.write(manager.resolveTarget(nanos(MINUTE_0)), "late".getBytes());
 
         manager.rotate(nanos(MINUTE_2));
 
@@ -127,7 +121,7 @@ class CycleManagerTest {
         });
 
         CycleManager manager = manager(Duration.ZERO);
-        manager.resolveTarget(nanos(MINUTE_0)).write("data".getBytes());
+        CycleBufferTest.write(manager.resolveTarget(nanos(MINUTE_0)), "data".getBytes());
 
         manager.rotate(nanos(MINUTE_1));
         manager.maybeExpireGracePeriod(nanos(MINUTE_1));
@@ -139,67 +133,37 @@ class CycleManagerTest {
     }
 
     @Test
-    void testWaitForCycleAndCloseBlocksUntilRotation() throws Exception {
-        CycleManager manager = manager(Duration.ZERO);
-        manager.currentOutputStream().write("data".getBytes());
-
-        Thread shutdownThread = new Thread(() -> {
-            try {
-                manager.waitForCycleAndClose();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        shutdownThread.start();
-        Thread.sleep(50);
-
-        assertTrue(shutdownThread.isAlive(), "Should block until rotation");
-
-        manager.rotate(nanos(MINUTE_1));
-
-        shutdownThread.join(5000);
-        assertFalse(shutdownThread.isAlive(), "Should complete after rotation");
-        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
-    }
-
-    @Test
-    void testShutdownUploadsBothPreviousAndCurrentCycles() throws Exception {
+    void flushUploadsThePreviousAndThePartialCurrentCycleThenCloses() throws Exception {
         ArgumentCaptor<Consumer<PutObjectRequest.Builder>> keyCaptor = ArgumentCaptor.forClass(Consumer.class);
         when(s3Client.putObject(keyCaptor.capture(), any(RequestBody.class)))
                 .thenReturn(PutObjectResponse.builder().build());
 
         CycleManager manager = manager(Duration.ofMinutes(5));
-        manager.currentOutputStream().write("min0".getBytes());
+        CycleBufferTest.write(manager.currentCycle(), "min0".getBytes());
         manager.rotate(nanos(MINUTE_1));
-        manager.currentOutputStream().write("min1".getBytes());
+        CycleBufferTest.write(manager.currentCycle(), "min1".getBytes());
 
-        Thread shutdownThread = new Thread(() -> {
-            try {
-                manager.waitForCycleAndClose();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
-        shutdownThread.start();
-        Thread.sleep(50);
-
-        manager.rotate(nanos(MINUTE_2));
-
-        shutdownThread.join(5000);
-        assertFalse(shutdownThread.isAlive());
+        manager.flush();
 
         verify(s3Client, times(2)).putObject(any(Consumer.class), any(RequestBody.class));
+        List<String> keys = new ArrayList<>();
+        for (Consumer<PutObjectRequest.Builder> key : keyCaptor.getAllValues()) {
+            PutObjectRequest.Builder builder = PutObjectRequest.builder();
+            key.accept(builder);
+            keys.add(builder.build().key());
+        }
+        assertEquals(List.of(MINUTE_0 + ".zst", MINUTE_1 + ".zst"), keys);
+        assertTrue(manager.isClosed());
+    }
 
-        List<Consumer<PutObjectRequest.Builder>> keys = keyCaptor.getAllValues();
-        PutObjectRequest.Builder b1 = PutObjectRequest.builder();
-        keys.get(0).accept(b1);
-        PutObjectRequest.Builder b2 = PutObjectRequest.builder();
-        keys.get(1).accept(b2);
+    @Test
+    void aSecondFlushDoesNothing() throws IOException {
+        CycleManager manager = manager(Duration.ZERO);
+        CycleBufferTest.write(manager.currentCycle(), "data".getBytes());
+        manager.flush();
+        manager.flush();
 
-        String key1 = b1.build().key();
-        String key2 = b2.build().key();
-        assertTrue(key1.contains("12") && key2.contains("12"));
-        assertNotEquals(key1, key2);
+        verify(s3Client, times(1)).putObject(any(Consumer.class), any(RequestBody.class));
     }
 
     @Test
@@ -209,14 +173,6 @@ class CycleManagerTest {
 
         manager.rotate(nanos(MINUTE_1));
         assertEquals(nanos(MINUTE_1), manager.currentStartNanos());
-    }
-
-    @Test
-    void testIsClosedAfterClose() throws IOException {
-        CycleManager manager = manager(Duration.ZERO);
-        assertFalse(manager.isClosed());
-        manager.close();
-        assertTrue(manager.isClosed());
     }
 
     private static long nanos(LocalDateTime time) {

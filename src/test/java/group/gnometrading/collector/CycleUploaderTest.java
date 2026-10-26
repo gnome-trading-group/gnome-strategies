@@ -2,6 +2,7 @@ package group.gnometrading.collector;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.never;
@@ -42,8 +43,8 @@ class CycleUploaderTest {
     S3Client s3Client;
 
     private static CycleBuffer cycleWithData(String key) throws IOException {
-        CycleBuffer cycle = new CycleBuffer(MINUTE_0, key);
-        cycle.outputStream().write("data".getBytes());
+        CycleBuffer cycle = new CycleBuffer(new DirectBufferPool(), MINUTE_0, key);
+        CycleBufferTest.write(cycle, "data".getBytes());
         return cycle;
     }
 
@@ -54,15 +55,15 @@ class CycleUploaderTest {
         CycleManager manager = new CycleManager(
                 new NullLogger(),
                 uploader,
+                new DirectBufferPool(),
                 BUCKET,
                 ts -> ts + ".zst",
                 ZoneOffset.UTC,
                 Duration.ofMinutes(1),
                 nanos(MINUTE_0),
-                Duration.ZERO,
-                false);
+                Duration.ZERO);
 
-        manager.currentOutputStream().write("data".getBytes());
+        CycleBufferTest.write(manager.currentCycle(), "data".getBytes());
         manager.rotate(nanos(MINUTE_1));
         manager.rotate(nanos(MINUTE_2));
 
@@ -129,6 +130,60 @@ class CycleUploaderTest {
         CycleBuffer cycle = cycleWithData("failed.zst");
 
         assertDoesNotThrow(() -> uploader.upload(cycle, BUCKET));
+    }
+
+    @Test
+    void aFailedUploadIsRetriedWithBackoff() throws Exception {
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenThrow(new IllegalStateException("S3 down"))
+                .thenThrow(new IllegalStateException("S3 down"))
+                .thenReturn(PutObjectResponse.builder().build());
+        List<Long> sleeps = new ArrayList<>();
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, Runnable::run, () -> 0, sleeps::add);
+
+        uploader.upload(cycleWithData("flaky.zst"), BUCKET);
+
+        verify(s3Client, times(3)).putObject(any(Consumer.class), any(RequestBody.class));
+        assertEquals(List.of(CycleUploader.RETRY_BACKOFF_NANOS[0], CycleUploader.RETRY_BACKOFF_NANOS[1]), sleeps);
+        assertEquals(0, uploader.failedUploads());
+    }
+
+    @Test
+    void anUploadThatKeepsFailingIsDroppedAndCounted() throws Exception {
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenThrow(new IllegalStateException("S3 down"));
+        List<Long> sleeps = new ArrayList<>();
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, Runnable::run, () -> 0, sleeps::add);
+
+        uploader.upload(cycleWithData("lost.zst"), BUCKET);
+
+        verify(s3Client, times(CycleUploader.RETRY_BACKOFF_NANOS.length + 1))
+                .putObject(any(Consumer.class), any(RequestBody.class));
+        assertEquals(CycleUploader.RETRY_BACKOFF_NANOS.length, sleeps.size());
+        assertEquals(1, uploader.failedUploads());
+    }
+
+    @Test
+    void anUploadThatNeverReturnsIsStuckOnceItOutlastsTheLimit() throws Exception {
+        CountDownLatch inUpload = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class))).thenAnswer(invocation -> {
+            inUpload.countDown();
+            release.await();
+            return PutObjectResponse.builder().build();
+        });
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client);
+        assertFalse(uploader.isStuck(System.nanoTime(), 0), "idle is not stuck");
+
+        uploader.upload(cycleWithData("hung.zst"), BUCKET);
+        assertTrue(inUpload.await(5, TimeUnit.SECONDS));
+        long later = System.nanoTime() + TimeUnit.MINUTES.toNanos(10);
+
+        assertTrue(uploader.isStuck(later, TimeUnit.MINUTES.toNanos(5)));
+        assertFalse(uploader.isStuck(System.nanoTime(), TimeUnit.MINUTES.toNanos(5)));
+        release.countDown();
+        uploader.close();
+        assertFalse(uploader.isStuck(later, TimeUnit.MINUTES.toNanos(5)));
     }
 
     @Test

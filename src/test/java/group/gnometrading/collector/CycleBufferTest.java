@@ -7,8 +7,12 @@ import com.github.luben.zstd.ZstdInputStream;
 import group.gnometrading.logging.NullLogger;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Random;
 import java.util.function.Consumer;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -29,59 +33,87 @@ class CycleBufferTest {
     @Mock
     S3Client s3Client;
 
+    private final DirectBufferPool pool = new DirectBufferPool();
+
+    static void write(CycleBuffer buffer, byte[] data) throws IOException {
+        buffer.write(new UnsafeBuffer(data), 0, data.length);
+    }
+
+    private byte[] uploadAndDecompress(CycleBuffer buffer) throws IOException {
+        ArgumentCaptor<RequestBody> body = ArgumentCaptor.forClass(RequestBody.class);
+        when(s3Client.putObject(any(Consumer.class), body.capture()))
+                .thenReturn(PutObjectResponse.builder().build());
+        buffer.upload(s3Client, BUCKET, new NullLogger());
+        byte[] compressed = body.getValue().contentStreamProvider().newStream().readAllBytes();
+        try (ZstdInputStream zstd = new ZstdInputStream(new ByteArrayInputStream(compressed))) {
+            return zstd.readAllBytes();
+        }
+    }
+
     @Test
     void testUploadCallsS3WithCorrectKeyAndBucket() throws IOException {
         when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
                 .thenReturn(PutObjectResponse.builder().build());
 
-        CycleBuffer buffer = new CycleBuffer(TIMESTAMP, KEY);
-        buffer.outputStream().write("data".getBytes());
+        CycleBuffer buffer = new CycleBuffer(pool, TIMESTAMP, KEY);
+        write(buffer, "data".getBytes(StandardCharsets.UTF_8));
         buffer.upload(s3Client, BUCKET, new NullLogger());
 
         ArgumentCaptor<Consumer<PutObjectRequest.Builder>> requestCaptor = ArgumentCaptor.forClass(Consumer.class);
         verify(s3Client).putObject(requestCaptor.capture(), any(RequestBody.class));
-
         PutObjectRequest.Builder builder = PutObjectRequest.builder();
         requestCaptor.getValue().accept(builder);
-        PutObjectRequest request = builder.build();
-        assertEquals(KEY, request.key());
-        assertEquals(BUCKET, request.bucket());
+        assertEquals(KEY, builder.build().key());
+        assertEquals(BUCKET, builder.build().bucket());
     }
 
     @Test
     void testUploadCompressesDataCorrectly() throws IOException {
-        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
-                .thenReturn(PutObjectResponse.builder().build());
+        CycleBuffer buffer = new CycleBuffer(pool, TIMESTAMP, KEY);
+        write(buffer, "hello world".getBytes(StandardCharsets.UTF_8));
 
-        CycleBuffer buffer = new CycleBuffer(TIMESTAMP, KEY);
-        buffer.outputStream().write("hello world".getBytes());
-        buffer.upload(s3Client, BUCKET, new NullLogger());
+        assertEquals("hello world", new String(uploadAndDecompress(buffer), StandardCharsets.UTF_8));
+    }
 
-        ArgumentCaptor<RequestBody> bodyCaptor = ArgumentCaptor.forClass(RequestBody.class);
-        verify(s3Client).putObject(any(Consumer.class), bodyCaptor.capture());
-
-        byte[] compressed =
-                bodyCaptor.getValue().contentStreamProvider().newStream().readAllBytes();
-        try (ZstdInputStream zstd = new ZstdInputStream(new ByteArrayInputStream(compressed))) {
-            assertEquals("hello world", new String(zstd.readAllBytes()));
+    @Test
+    void aMinuteLargerThanEveryBufferRoundTrips() throws IOException {
+        // Incompressible and several times the staging, target and initial output sizes, so every one of them fills.
+        byte[] data = new byte[1 << 20];
+        new Random(7).nextBytes(data);
+        CycleBuffer buffer = new CycleBuffer(pool, TIMESTAMP, KEY);
+        for (int offset = 0; offset < data.length; offset += 1000) {
+            buffer.write(new UnsafeBuffer(data), offset, Math.min(1000, data.length - offset));
         }
+
+        assertArrayEquals(data, uploadAndDecompress(buffer));
+    }
+
+    @Test
+    void writingFromAByteBufferLeavesItsPositionAlone() throws IOException {
+        ByteBuffer source = ByteBuffer.allocateDirect(16);
+        source.put("0123456789abcdef".getBytes(StandardCharsets.UTF_8)).flip().position(4);
+        CycleBuffer buffer = new CycleBuffer(pool, TIMESTAMP, KEY);
+
+        buffer.write(source, source.position(), 6);
+
+        assertEquals(4, source.position());
+        assertEquals("456789", new String(uploadAndDecompress(buffer), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void anEmptyMinuteUploadsAValidEmptyFile() throws IOException {
+        assertEquals(0, uploadAndDecompress(new CycleBuffer(pool, TIMESTAMP, KEY)).length);
+    }
+
+    @Test
+    void releasedBuffersAreReused() {
+        ByteBuffer first = pool.acquire(5000);
+        pool.release(first);
+        assertSame(first, pool.acquire(4097));
     }
 
     @Test
     void testTimestampReturned() {
-        CycleBuffer buffer = new CycleBuffer(TIMESTAMP, KEY);
-        assertEquals(TIMESTAMP, buffer.timestamp());
-    }
-
-    @Test
-    void testCompressedSizePositiveAfterUpload() throws IOException {
-        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
-                .thenReturn(PutObjectResponse.builder().build());
-
-        CycleBuffer buffer = new CycleBuffer(TIMESTAMP, KEY);
-        buffer.outputStream().write("some data".getBytes());
-        buffer.upload(s3Client, BUCKET, new NullLogger());
-
-        assertTrue(buffer.compressedSize() > 0);
+        assertEquals(TIMESTAMP, new CycleBuffer(pool, TIMESTAMP, KEY).timestamp());
     }
 }

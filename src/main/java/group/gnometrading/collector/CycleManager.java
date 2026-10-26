@@ -1,23 +1,22 @@
 package group.gnometrading.collector;
 
-import com.github.luben.zstd.ZstdOutputStream;
 import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
-import java.io.Closeable;
-import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.concurrent.CountDownLatch;
 
 /**
  * Splits a stream of events into fixed-length cycles, one file per cycle, and hands finished cycles to the uploader.
  *
  * <p>Runs on the thread receiving data, so the per-event methods take epoch nanoseconds and never allocate. A
  * {@link LocalDateTime} is built only on rotation, once per cycle, for the file's key.
+ *
+ * <p>{@link #flush} hands over the open cycles, the current one partial, when its stream stops: the process shutting
+ * down or the stream being quarantined. It must run once the thread receiving data has stopped.
  */
-final class CycleManager implements Closeable {
+final class CycleManager {
 
     @FunctionalInterface
     interface KeyFactory {
@@ -26,6 +25,7 @@ final class CycleManager implements Closeable {
 
     private final Logger logger;
     private final CycleUploader uploader;
+    private final DirectBufferPool pool;
     private final String bucketName;
     private final KeyFactory keyFactory;
     private final ZoneId zone;
@@ -38,47 +38,32 @@ final class CycleManager implements Closeable {
     private long previousStartNanos;
 
     private volatile boolean closed;
-    private volatile boolean shutdownRequested;
-    private final CountDownLatch cycleFlippedLatch;
 
     CycleManager(
             Logger logger,
             CycleUploader uploader,
+            DirectBufferPool pool,
             String bucketName,
             KeyFactory keyFactory,
             ZoneId zone,
             Duration cycleLength,
             long initialNanos,
-            Duration gracePeriod,
-            boolean attachShutdownHook) {
+            Duration gracePeriod) {
         this.logger = logger;
         this.uploader = uploader;
+        this.pool = pool;
         this.bucketName = bucketName;
         this.keyFactory = keyFactory;
         this.zone = zone;
         this.cycleNanos = cycleLength.toNanos();
         this.gracePeriodNanos = gracePeriod.toNanos();
-        this.closed = false;
-        this.shutdownRequested = false;
-        this.cycleFlippedLatch = new CountDownLatch(1);
         this.currentStartNanos = cycleStart(initialNanos);
         this.currentCycle = newCycle(this.currentStartNanos);
-        this.previousCycle = null;
-
-        if (attachShutdownHook) {
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                try {
-                    this.waitForCycleAndClose();
-                } catch (Exception e) {
-                    logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to cycle files: %s", e.getMessage());
-                }
-            }));
-        }
     }
 
     private CycleBuffer newCycle(long startNanos) {
         LocalDateTime start = LocalDateTime.ofInstant(Instant.ofEpochSecond(0, startNanos), zone);
-        return new CycleBuffer(start, keyFactory.createKey(start));
+        return new CycleBuffer(pool, start, keyFactory.createKey(start));
     }
 
     static long epochNanos(Instant instant) {
@@ -95,7 +80,7 @@ final class CycleManager implements Closeable {
         return eventNanos - currentStartNanos >= cycleNanos;
     }
 
-    boolean rotate(long newCycleStartNanos) {
+    void rotate(long newCycleStartNanos) {
         if (previousCycle != null) {
             uploader.upload(previousCycle, bucketName);
             previousCycle = null;
@@ -108,16 +93,6 @@ final class CycleManager implements Closeable {
         previousStartNanos = currentStartNanos;
         currentCycle = next;
         currentStartNanos = newCycleStartNanos;
-
-        if (shutdownRequested) {
-            // Inline so the cycle is in S3 before the shutdown hook waiting on the latch lets the JVM exit.
-            uploader.uploadNow(previousCycle, bucketName);
-            previousCycle = null;
-            cycleFlippedLatch.countDown();
-            return true;
-        }
-
-        return false;
     }
 
     void maybeExpireGracePeriod(long eventNanos) {
@@ -130,12 +105,13 @@ final class CycleManager implements Closeable {
         }
     }
 
-    ZstdOutputStream resolveTarget(long eventCycleStartNanos) {
+    /** The cycle an event belongs in: the previous one while its grace period lasts, else the current one. */
+    CycleBuffer resolveTarget(long eventCycleStartNanos) {
         if (previousCycle == null) {
-            return currentCycle.outputStream();
+            return currentCycle;
         }
         if (eventCycleStartNanos == previousStartNanos) {
-            return previousCycle.outputStream();
+            return previousCycle;
         }
         if (eventCycleStartNanos < previousStartNanos) {
             logger.logf(
@@ -144,11 +120,11 @@ final class CycleManager implements Closeable {
                     eventCycleStartNanos,
                     previousCycle.timestamp());
         }
-        return currentCycle.outputStream();
+        return currentCycle;
     }
 
-    ZstdOutputStream currentOutputStream() {
-        return currentCycle.outputStream();
+    CycleBuffer currentCycle() {
+        return currentCycle;
     }
 
     long currentStartNanos() {
@@ -159,25 +135,20 @@ final class CycleManager implements Closeable {
         return closed;
     }
 
-    void waitForCycleAndClose() throws IOException, InterruptedException {
-        logger.logf(LogMessage.DEBUG, "Shutdown requested, waiting for cycle to flip before closing");
-        shutdownRequested = true;
-        cycleFlippedLatch.await();
-        logger.logf(LogMessage.DEBUG, "Cycle flipped, proceeding with close");
-        close();
-    }
-
-    @Override
-    public void close() throws IOException {
+    /**
+     * Hands the previous cycle and the partial current one to the uploader and stops taking events. Each partial file
+     * keeps its cycle's key; the merger chooses between it and any other copy of that minute.
+     */
+    void flush() {
         if (closed) {
-            logger.logf(LogMessage.DEBUG, "CycleManager already closed, skipping");
             return;
         }
         closed = true;
         if (previousCycle != null) {
-            previousCycle.close();
+            uploader.upload(previousCycle, bucketName);
+            previousCycle = null;
         }
-        currentCycle.close();
-        logger.logf(LogMessage.DEBUG, "CycleManager closed successfully");
+        logger.logf(LogMessage.DEBUG, "Flushing partial cycle %s", currentCycle.timestamp());
+        uploader.upload(currentCycle, bucketName);
     }
 }
