@@ -116,10 +116,10 @@ class MarketDataCollectorAllocationTest {
 
         assertEquals(11, s3.uploads, "each finished minute, once its grace period passed");
         assertEquals(11 * 6_000, s3.records, "every record of every finished minute, readable");
-        // The pool's buffers are 4 KB and up. Smaller direct buffers come and go outside it (zstd's decoder in this
-        // test's S3 client) until a GC frees them, so the check is on bytes held, not the count of buffers.
-        long grown = directBytesAfterEachMinute.get(11) - directBytesAfterEachMinute.get(3);
-        assertTrue(grown < 4_096, "direct bytes after each minute: " + directBytesAfterEachMinute);
+        // It may shrink, when a GC frees direct memory left over from before; it must never grow.
+        assertTrue(
+                directBytesAfterEachMinute.get(11) <= directBytesAfterEachMinute.get(3),
+                "no new direct memory once the pool has grown: " + directBytesAfterEachMinute);
         // Each new minute builds its file (key, zstd stream) and, here, uploads the last one on this same thread; in a
         // shard the upload runs on the uploader's thread. Either way it is per minute, not per record.
         long steadyMinute = heapPerMinute.subList(3, 12).stream()
@@ -131,6 +131,9 @@ class MarketDataCollectorAllocationTest {
 
     /** Counts what reaches S3, and decompresses each file to prove it is whole. */
     private static final class UploadCounter implements S3Client {
+        // Every Mbp10Schema allocates direct memory of its own, so one is measured once rather than per upload.
+        private static final int RECORD_SIZE = new Mbp10Schema().totalMessageSize();
+
         int uploads;
         long records;
         // Decompressing a whole minute to count it is the test's own work, not the collector's.
@@ -148,7 +151,7 @@ class MarketDataCollectorAllocationTest {
             long before = allocatedOnThisThread();
             try (InputStream in =
                     new ZstdInputStream(body.contentStreamProvider().newStream())) {
-                records += in.readAllBytes().length / new Mbp10Schema().totalMessageSize();
+                records += in.readAllBytes().length / RECORD_SIZE;
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
