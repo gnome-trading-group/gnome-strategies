@@ -15,6 +15,11 @@ import java.time.ZoneId;
  *
  * <p>{@link #flush} hands over the open cycles, the current one partial, when its stream stops: the process shutting
  * down or the stream being quarantined. It must run once the thread receiving data has stopped.
+ *
+ * <p>Only cycles starting within the write window {@code [writeFrom, writeUntil)} are uploaded; the rest are released
+ * unwritten. A hand-off between shards cuts at a minute boundary this way, so each minute is written once, by one
+ * shard, complete. The window is by cycle, not by a record's event time: a record stamped older than the previous
+ * cycle lands in the current one, and must go wherever that cycle goes.
  */
 final class CycleManager {
 
@@ -38,6 +43,8 @@ final class CycleManager {
     private long previousStartNanos;
 
     private volatile boolean closed;
+    private volatile long writeFromNanos = Long.MIN_VALUE;
+    private volatile long writeUntilNanos = Long.MAX_VALUE;
 
     CycleManager(
             Logger logger,
@@ -80,9 +87,27 @@ final class CycleManager {
         return eventNanos - currentStartNanos >= cycleNanos;
     }
 
+    /** Uploads only cycles starting at or after {@code epochNanos}; {@link Long#MAX_VALUE} uploads none. */
+    void writeFrom(long epochNanos) {
+        writeFromNanos = epochNanos;
+    }
+
+    /** Uploads only cycles starting before {@code epochNanos}. */
+    void writeUntil(long epochNanos) {
+        writeUntilNanos = epochNanos;
+    }
+
+    private void handOver(CycleBuffer cycle, long startNanos) {
+        if (startNanos >= writeFromNanos && startNanos < writeUntilNanos) {
+            uploader.upload(cycle, bucketName);
+        } else {
+            cycle.release();
+        }
+    }
+
     void rotate(long newCycleStartNanos) {
         if (previousCycle != null) {
-            uploader.upload(previousCycle, bucketName);
+            handOver(previousCycle, previousStartNanos);
             previousCycle = null;
         }
 
@@ -100,7 +125,7 @@ final class CycleManager {
             return;
         }
         if (eventNanos - currentStartNanos >= gracePeriodNanos) {
-            uploader.upload(previousCycle, bucketName);
+            handOver(previousCycle, previousStartNanos);
             previousCycle = null;
         }
     }
@@ -136,8 +161,8 @@ final class CycleManager {
     }
 
     /**
-     * Hands the previous cycle and the partial current one to the uploader and stops taking events. Each partial file
-     * keeps its cycle's key; the merger chooses between it and any other copy of that minute.
+     * Hands the previous cycle and the partial current one to the uploader, within the write window, and stops taking
+     * events. A partial file keeps its cycle's key; if another writer already wrote that minute, the first one stands.
      */
     void flush() {
         if (closed) {
@@ -145,10 +170,10 @@ final class CycleManager {
         }
         closed = true;
         if (previousCycle != null) {
-            uploader.upload(previousCycle, bucketName);
+            handOver(previousCycle, previousStartNanos);
             previousCycle = null;
         }
         logger.logf(LogMessage.DEBUG, "Flushing partial cycle %s", currentCycle.timestamp());
-        uploader.upload(currentCycle, bucketName);
+        handOver(currentCycle, currentStartNanos);
     }
 }

@@ -11,6 +11,7 @@ import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
  * One cycle's file: records zstd-compressed as they arrive into pooled direct memory, so a minute of market data puts
@@ -26,6 +27,7 @@ final class CycleBuffer {
     private static final int STAGING_CAPACITY = 1 << 16;
     private static final int TARGET_CAPACITY = 1 << 17;
     private static final int INITIAL_OUTPUT_CAPACITY = 1 << 16;
+    private static final int HTTP_PRECONDITION_FAILED = 412;
 
     private final DirectBufferPool pool;
     private final LocalDateTime timestamp;
@@ -99,7 +101,7 @@ final class CycleBuffer {
         }
         finished = true;
         // zstd writes no frame for a stream it never compressed into. A minute can end with no records (its stream
-        // flushed on stop or removal before anything arrived), and its file must still be valid zstd for the merger.
+        // flushed on stop or removal before anything arrived), and its file must still be valid zstd for readers.
         // A minute with no records at all, on a quiet market, never opens a file; coverage comes from heartbeats.
         compressStaged(0);
         compressor.close();
@@ -115,13 +117,22 @@ final class CycleBuffer {
             return;
         }
         logger.logf(LogMessage.DEBUG, "Uploading file: %s (%d bytes)", s3Key, length);
-        // A fresh view per attempt: the SDK may read the body more than once when it retries.
-        s3Client.putObject(
-                request -> request.key(s3Key).bucket(bucketName),
-                RequestBody.fromContentProvider(
-                        () -> new ByteBufferInputStream(output.duplicate().flip()),
-                        length,
-                        "application/octet-stream"));
+        try {
+            // A fresh view per attempt: the SDK may read the body more than once when it retries.
+            s3Client.putObject(
+                    request -> request.key(s3Key).bucket(bucketName).ifNoneMatch("*"),
+                    RequestBody.fromContentProvider(
+                            () -> new ByteBufferInputStream(output.duplicate().flip()),
+                            length,
+                            "application/octet-stream"));
+        } catch (S3Exception e) {
+            // Each minute has one file and the first writer keeps it: a 412 is our own retried success or another
+            // shard's copy of the minute, never a failure to retry.
+            if (e.statusCode() != HTTP_PRECONDITION_FAILED) {
+                throw e;
+            }
+            logger.logf(LogMessage.DEBUG, "Already written, keeping the first: %s", s3Key);
+        }
     }
 
     /** Returns every buffer to the pool; the file is gone afterwards. */

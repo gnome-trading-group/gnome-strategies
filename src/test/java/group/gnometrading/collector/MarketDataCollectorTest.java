@@ -41,7 +41,7 @@ class MarketDataCollectorTest {
     private static final int STREAM_ID = 499;
     private static final String OUTPUT_BUCKET = "test-bucket";
     private static final Pattern KEY_PATTERN =
-            Pattern.compile("^499/book/mbp-10/\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}/[a-f0-9]{8}\\.zst$");
+            Pattern.compile("^499/book/mbp-10/\\d{4}/\\d{2}/\\d{2}/\\d{2}/\\d{2}\\.zst$");
 
     @Mock
     S3Client s3Client;

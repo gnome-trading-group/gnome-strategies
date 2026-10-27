@@ -12,7 +12,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
-/** Writes one stream's records into minute files, rotated by the records' event time. */
+/**
+ * Writes one stream's records into minute files, rotated by the records' event time, at the stream's final key: one
+ * file per minute, the first writer's. {@link #writeFrom} and {@link #writeUntil} bound which minutes this collector
+ * writes, so a stream handed between shards is cut at a minute boundary.
+ */
 public final class MarketDataCollector implements EventHandler<StreamRecord> {
 
     private static final Duration GRACE_PERIOD = Duration.ofSeconds(5);
@@ -52,7 +56,7 @@ public final class MarketDataCollector implements EventHandler<StreamRecord> {
                 uploader,
                 pool,
                 bucketName,
-                ts -> new StreamEntry(streamId, recordType, ts, StreamEntry.EntryType.RAW).getKey(),
+                ts -> new StreamEntry(streamId, recordType, ts).getKey(),
                 clock.getZone(),
                 StreamEntry.CYCLE_CHRONO_UNIT.getDuration(),
                 CycleManager.epochNanos(clock.instant()),
@@ -81,6 +85,16 @@ public final class MarketDataCollector implements EventHandler<StreamRecord> {
             logger.logf(LogMessage.UNKNOWN_ERROR, "Error trying to write to file stream: %s", e.getMessage());
             throw new IllegalStateException(e);
         }
+    }
+
+    /** Writes only minutes starting at or after {@code epochNanos}; {@link Long#MAX_VALUE} writes none. Any thread. */
+    public void writeFrom(long epochNanos) {
+        cycleManager.writeFrom(epochNanos);
+    }
+
+    /** Writes only minutes starting before {@code epochNanos}. Any thread. */
+    public void writeUntil(long epochNanos) {
+        cycleManager.writeUntil(epochNanos);
     }
 
     /** Hands this stream's open minutes to the uploader; once the thread feeding it has stopped. */

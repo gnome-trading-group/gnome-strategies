@@ -178,4 +178,45 @@ class CycleManagerTest {
     private static long nanos(LocalDateTime time) {
         return CycleManager.epochNanos(time.toInstant(ZoneOffset.UTC));
     }
+
+    private List<String> capturingKeys() {
+        List<String> keys = new ArrayList<>();
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class))).thenAnswer(invocation -> {
+            Consumer<PutObjectRequest.Builder> request = invocation.getArgument(0);
+            PutObjectRequest.Builder builder = PutObjectRequest.builder();
+            request.accept(builder);
+            keys.add(builder.build().key());
+            return PutObjectResponse.builder().build();
+        });
+        return keys;
+    }
+
+    @Test
+    void aShardTakingOverWritesNothingBeforeTheCut() {
+        List<String> keys = capturingKeys();
+        CycleManager manager = manager(Duration.ZERO);
+        manager.writeFrom(Long.MAX_VALUE);
+
+        manager.rotate(nanos(MINUTE_1));
+        manager.maybeExpireGracePeriod(nanos(MINUTE_1));
+        manager.writeFrom(nanos(MINUTE_2));
+        manager.rotate(nanos(MINUTE_2));
+        manager.maybeExpireGracePeriod(nanos(MINUTE_2));
+        manager.flush();
+
+        assertEquals(List.of(MINUTE_2 + ".zst"), keys, "warming wrote nothing; from the cut on, every minute");
+    }
+
+    @Test
+    void aShardHandingOffWritesUpToTheCutAndNotThePartialMinuteAfterIt() {
+        List<String> keys = capturingKeys();
+        CycleManager manager = manager(Duration.ZERO);
+        manager.writeUntil(nanos(MINUTE_1));
+
+        manager.rotate(nanos(MINUTE_1));
+        manager.maybeExpireGracePeriod(nanos(MINUTE_1));
+        manager.flush();
+
+        assertEquals(List.of(MINUTE_0 + ".zst"), keys);
+    }
 }

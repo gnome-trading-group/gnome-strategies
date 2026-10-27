@@ -22,6 +22,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 @ExtendWith(MockitoExtension.class)
 class CycleBufferTest {
@@ -115,5 +116,39 @@ class CycleBufferTest {
     @Test
     void testTimestampReturned() {
         assertEquals(TIMESTAMP, new CycleBuffer(pool, TIMESTAMP, KEY).timestamp());
+    }
+
+    @Test
+    void uploadsOnlyIfNoOneWroteTheMinuteAndTakesA412AsDone() throws IOException {
+        ArgumentCaptor<Consumer<PutObjectRequest.Builder>> requestCaptor = ArgumentCaptor.forClass(Consumer.class);
+        when(s3Client.putObject(requestCaptor.capture(), any(RequestBody.class)))
+                .thenThrow(S3Exception.builder()
+                        .statusCode(412)
+                        .message("PreconditionFailed")
+                        .build());
+
+        CycleBuffer buffer = new CycleBuffer(pool, TIMESTAMP, KEY);
+        write(buffer, "data".getBytes(StandardCharsets.UTF_8));
+        assertDoesNotThrow(() -> buffer.upload(s3Client, BUCKET, new NullLogger()));
+
+        PutObjectRequest.Builder builder = PutObjectRequest.builder();
+        requestCaptor.getValue().accept(builder);
+        assertEquals("*", builder.build().ifNoneMatch());
+    }
+
+    @Test
+    void anyOtherS3ErrorFailsTheUploadSoItIsRetried() {
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenThrow(S3Exception.builder()
+                        .statusCode(503)
+                        .message("SlowDown")
+                        .build());
+
+        CycleBuffer buffer = new CycleBuffer(pool, TIMESTAMP, KEY);
+
+        assertThrows(S3Exception.class, () -> {
+            write(buffer, "data".getBytes(StandardCharsets.UTF_8));
+            buffer.upload(s3Client, BUCKET, new NullLogger());
+        });
     }
 }
