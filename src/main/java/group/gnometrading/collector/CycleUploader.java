@@ -5,6 +5,8 @@ import group.gnometrading.logging.LogMessage;
 import group.gnometrading.logging.Logger;
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -23,14 +25,16 @@ import software.amazon.awssdk.services.s3.S3Client;
  * listing's socket reader for raw capture. A synchronous S3 put there blocks that thread for the
  * whole request, so every message behind it is read late and gets a late receive timestamp.
  *
- * <p>One thread serves every collector. It blocks on its queue while idle, so it costs no CPU
- * between the once-a-minute rotations, unlike a polling agent on a small CPU quota.
+ * <p>{@link #UPLOAD_THREADS} threads serve every collector: a shard of hundreds of streams uploads hundreds of files a
+ * minute, many to a bucket in another region, which one thread uploading them in turn can't keep up with. They block
+ * on their queue while idle, so they cost no CPU between the once-a-minute rotations.
  *
  * <p>Every collector rotates at the same minute boundary, so the queue fills all at once. Uploading
- * that backlog back to back burns a full core of request signing and TLS for as long as it lasts,
- * which on a small CPU allocation starves the socket readers and delays their receive timestamps.
+ * that backlog back to back burns cores of request signing and TLS for as long as it lasts,
+ * which starves the socket readers and delays their receive timestamps.
  * Uploads are therefore spaced out: a backlog that fits in {@link #DRAIN_WINDOW_NANOS} at {@link
- * #MAX_SPACING_NANOS} apart is spread across it, and a larger one is spaced more tightly.
+ * #MAX_SPACING_NANOS} apart per thread is spread across it, and a larger one is spaced more tightly.
+ * Once the process is stopping, nothing is spaced, so every thread uploads flat out within the stop timeout.
  *
  * <p>A failed upload is retried after {@link #RETRY_BACKOFF_NANOS}; one that still fails is dropped and counted. With
  * one copy of each stream a lost file is a coverage gap the inventory shows, so it isn't kept on disk. Every file's
@@ -40,7 +44,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  */
 public final class CycleUploader implements Closeable {
 
-    private static final long SHUTDOWN_TIMEOUT_SECONDS = 45;
+    static final long SHUTDOWN_TIMEOUT_SECONDS = 45;
     static final long[] RETRY_BACKOFF_NANOS = {
         TimeUnit.SECONDS.toNanos(1), TimeUnit.SECONDS.toNanos(5), TimeUnit.SECONDS.toNanos(30)
     };
@@ -48,6 +52,7 @@ public final class CycleUploader implements Closeable {
     static final long CLOSING_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(1);
     static final long DRAIN_WINDOW_NANOS = TimeUnit.SECONDS.toNanos(20);
     static final long MAX_SPACING_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
+    static final int UPLOAD_THREADS = 8;
 
     private final Logger logger;
     private final S3Client s3Client;
@@ -57,26 +62,40 @@ public final class CycleUploader implements Closeable {
     private final Sleeper sleeper;
     private volatile boolean closing;
     private final AtomicLong failedUploads = new AtomicLong();
-    // When the upload in progress started, retries included; 0 while none is. Lets a health check tell an uploader
-    // that is working through a backlog from one stuck on a single file.
-    private volatile long uploadStartedNanos;
+    // When each upload in progress started, retries included. Lets a health check tell an uploader working through a
+    // backlog from one stuck on a single file.
+    private final Map<CycleBuffer, Long> inProgress = new ConcurrentHashMap<>();
+    private final int threads;
 
     public CycleUploader(Logger logger, S3Client s3Client) {
         this(logger, s3Client, newUploaderExecutor());
     }
 
     private CycleUploader(Logger logger, S3Client s3Client, ThreadPoolExecutor executor) {
-        this(logger, s3Client, executor, executor, () -> executor.getQueue().size(), LockSupport::parkNanos);
+        this(
+                logger,
+                s3Client,
+                executor,
+                executor,
+                () -> executor.getQueue().size(),
+                LockSupport::parkNanos,
+                UPLOAD_THREADS);
     }
 
     @VisibleForTesting
     CycleUploader(Logger logger, S3Client s3Client, Executor executor) {
-        this(logger, s3Client, executor, null, () -> 0, nanos -> {});
+        this(logger, s3Client, executor, null, () -> 0, nanos -> {}, 1);
     }
 
     @VisibleForTesting
-    CycleUploader(Logger logger, S3Client s3Client, Executor executor, IntSupplier queuedUploads, Sleeper sleeper) {
-        this(logger, s3Client, executor, null, queuedUploads, sleeper);
+    CycleUploader(
+            Logger logger,
+            S3Client s3Client,
+            Executor executor,
+            IntSupplier queuedUploads,
+            Sleeper sleeper,
+            int threads) {
+        this(logger, s3Client, executor, null, queuedUploads, sleeper, threads);
     }
 
     private CycleUploader(
@@ -85,18 +104,25 @@ public final class CycleUploader implements Closeable {
             Executor executor,
             ExecutorService ownedExecutor,
             IntSupplier queuedUploads,
-            Sleeper sleeper) {
+            Sleeper sleeper,
+            int threads) {
         this.logger = logger;
         this.s3Client = s3Client;
         this.executor = executor;
         this.ownedExecutor = ownedExecutor;
         this.queuedUploads = queuedUploads;
         this.sleeper = sleeper;
+        this.threads = threads;
     }
 
     private static ThreadPoolExecutor newUploaderExecutor() {
         return new ThreadPoolExecutor(
-                1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), CycleUploader::newUploaderThread);
+                UPLOAD_THREADS,
+                UPLOAD_THREADS,
+                0,
+                TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(),
+                CycleUploader::newUploaderThread);
     }
 
     private static Thread newUploaderThread(Runnable runnable) {
@@ -121,7 +147,7 @@ public final class CycleUploader implements Closeable {
     }
 
     void uploadNow(CycleBuffer cycle, String bucketName) {
-        uploadStartedNanos = System.nanoTime();
+        inProgress.put(cycle, System.nanoTime());
         try {
             for (int attempt = 0; ; attempt++) {
                 try {
@@ -150,7 +176,7 @@ public final class CycleUploader implements Closeable {
                 }
             }
         } finally {
-            uploadStartedNanos = 0;
+            inProgress.remove(cycle);
             cycle.release();
         }
     }
@@ -160,13 +186,17 @@ public final class CycleUploader implements Closeable {
         return failedUploads.get();
     }
 
-    /** Whether one upload has been in progress, retries included, for longer than {@code maxNanos}. */
+    /** Whether any upload has been in progress, retries included, for longer than {@code maxNanos}. */
     public boolean isStuck(final long nowNanos, final long maxNanos) {
-        final long started = uploadStartedNanos;
-        return started != 0 && nowNanos - started > maxNanos;
+        for (long started : inProgress.values()) {
+            if (nowNanos - started > maxNanos) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    /** Files waiting for the uploader thread. */
+    /** Files waiting for an uploader thread. */
     public int queuedUploads() {
         return queuedUploads.getAsInt();
     }
@@ -176,7 +206,8 @@ public final class CycleUploader implements Closeable {
         if (queued == 0 || closing) {
             return;
         }
-        sleeper.sleep(Math.min(MAX_SPACING_NANOS, DRAIN_WINDOW_NANOS / queued));
+        // Each thread takes its share of the backlog, so the threads together drain it across the window.
+        sleeper.sleep(Math.min(MAX_SPACING_NANOS, DRAIN_WINDOW_NANOS * threads / queued));
     }
 
     @Override

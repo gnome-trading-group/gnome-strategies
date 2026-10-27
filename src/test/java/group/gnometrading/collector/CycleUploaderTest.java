@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -139,7 +140,7 @@ class CycleUploaderTest {
                 .thenThrow(new IllegalStateException("S3 down"))
                 .thenReturn(PutObjectResponse.builder().build());
         List<Long> sleeps = new ArrayList<>();
-        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, Runnable::run, () -> 0, sleeps::add);
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, Runnable::run, () -> 0, sleeps::add, 1);
 
         uploader.upload(cycleWithData("flaky.zst"), BUCKET);
 
@@ -153,7 +154,7 @@ class CycleUploaderTest {
         when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
                 .thenThrow(new IllegalStateException("S3 down"));
         List<Long> sleeps = new ArrayList<>();
-        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, Runnable::run, () -> 0, sleeps::add);
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, Runnable::run, () -> 0, sleeps::add, 1);
 
         uploader.upload(cycleWithData("lost.zst"), BUCKET);
 
@@ -192,7 +193,7 @@ class CycleUploaderTest {
                 .thenReturn(PutObjectResponse.builder().build());
         Deque<Runnable> queue = new ArrayDeque<>();
         List<Long> sleeps = new ArrayList<>();
-        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, queue::add, queue::size, sleeps::add);
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, queue::add, queue::size, sleeps::add, 1);
 
         for (int i = 0; i < 3; i++) {
             uploader.upload(cycleWithData(i + ".zst"), BUCKET);
@@ -211,12 +212,49 @@ class CycleUploaderTest {
                 .thenReturn(PutObjectResponse.builder().build());
         List<Runnable> tasks = new ArrayList<>();
         List<Long> sleeps = new ArrayList<>();
-        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, tasks::add, () -> 400, sleeps::add);
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, tasks::add, () -> 400, sleeps::add, 1);
 
         uploader.upload(cycleWithData("backlog.zst"), BUCKET);
         tasks.get(0).run();
 
         assertEquals(List.of(CycleUploader.DRAIN_WINDOW_NANOS / 400), sleeps);
+    }
+
+    @Test
+    void aBacklogIsSharedAcrossEveryThread() throws Exception {
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().build());
+        List<Runnable> tasks = new ArrayList<>();
+        List<Long> sleeps = new ArrayList<>();
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client, tasks::add, () -> 1_600, sleeps::add, 8);
+
+        uploader.upload(cycleWithData("backlog.zst"), BUCKET);
+        tasks.get(0).run();
+
+        assertEquals(List.of(CycleUploader.DRAIN_WINDOW_NANOS * 8 / 1_600), sleeps);
+    }
+
+    @Test
+    void stoppingUploadsAWholeShardsPartialMinutesWithinTheStopTimeout() throws Exception {
+        AtomicInteger uploaded = new AtomicInteger();
+        when(s3Client.putObject(any(Consumer.class), any(RequestBody.class))).thenAnswer(invocation -> {
+            // About a cross-region put's round trip.
+            Thread.sleep(100);
+            uploaded.incrementAndGet();
+            return PutObjectResponse.builder().build();
+        });
+        CycleUploader uploader = new CycleUploader(new NullLogger(), s3Client);
+        for (int i = 0; i < 400; i++) {
+            uploader.upload(cycleWithData(i + ".zst"), BUCKET);
+        }
+
+        long started = System.nanoTime();
+        uploader.close();
+        long tookSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - started);
+
+        assertEquals(400, uploaded.get(), "nothing lost");
+        assertTrue(tookSeconds < CycleUploader.SHUTDOWN_TIMEOUT_SECONDS / 3, "took " + tookSeconds + " s");
+        assertEquals(0, uploader.failedUploads());
     }
 
     private static long nanos(LocalDateTime time) {
