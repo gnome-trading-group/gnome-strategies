@@ -58,6 +58,7 @@ class CycleManagerTest {
     @Test
     void testDoubleRotationForceUploadsPrevious() throws IOException {
         CycleManager manager = manager(Duration.ofMinutes(5));
+        CycleBufferTest.write(manager.currentCycle(), "minute0".getBytes());
 
         manager.rotate(nanos(MINUTE_1));
         verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
@@ -79,6 +80,7 @@ class CycleManagerTest {
     @Test
     void testGracePeriodExpiryTriggersUpload() throws IOException {
         CycleManager manager = manager(Duration.ofSeconds(10));
+        CycleBufferTest.write(manager.currentCycle(), "minute0".getBytes());
 
         manager.rotate(nanos(MINUTE_1));
         manager.maybeExpireGracePeriod(nanos(MINUTE_1.plusSeconds(10)));
@@ -192,15 +194,18 @@ class CycleManagerTest {
     }
 
     @Test
-    void aShardTakingOverWritesNothingBeforeTheCut() {
+    void aShardTakingOverWritesNothingBeforeTheCut() throws IOException {
         List<String> keys = capturingKeys();
         CycleManager manager = manager(Duration.ZERO);
         manager.writeFrom(Long.MAX_VALUE);
+        CycleBufferTest.write(manager.currentCycle(), "minute0".getBytes());
 
         manager.rotate(nanos(MINUTE_1));
+        CycleBufferTest.write(manager.currentCycle(), "minute1".getBytes());
         manager.maybeExpireGracePeriod(nanos(MINUTE_1));
         manager.writeFrom(nanos(MINUTE_2));
         manager.rotate(nanos(MINUTE_2));
+        CycleBufferTest.write(manager.currentCycle(), "minute2".getBytes());
         manager.maybeExpireGracePeriod(nanos(MINUTE_2));
         manager.flush();
 
@@ -208,15 +213,57 @@ class CycleManagerTest {
     }
 
     @Test
-    void aShardHandingOffWritesUpToTheCutAndNotThePartialMinuteAfterIt() {
+    void aShardHandingOffWritesUpToTheCutAndNotThePartialMinuteAfterIt() throws IOException {
         List<String> keys = capturingKeys();
         CycleManager manager = manager(Duration.ZERO);
         manager.writeUntil(nanos(MINUTE_1));
+        CycleBufferTest.write(manager.currentCycle(), "minute0".getBytes());
 
         manager.rotate(nanos(MINUTE_1));
+        CycleBufferTest.write(manager.currentCycle(), "minute1".getBytes());
         manager.maybeExpireGracePeriod(nanos(MINUTE_1));
         manager.flush();
 
         assertEquals(List.of(MINUTE_0 + ".zst"), keys);
+    }
+
+    @Test
+    void aQuietMinuteIsWrittenOnceTheWallClockPassesItsEndAndGrace() throws Exception {
+        List<String> keys = capturingKeys();
+        CycleManager manager = manager(Duration.ofSeconds(5));
+        CycleBufferTest.write(manager.currentCycle(), "snapshot".getBytes());
+
+        manager.expire(nanos(MINUTE_1.plusSeconds(4)));
+        assertEquals(List.of(), keys, "still within the grace");
+
+        manager.expire(nanos(MINUTE_1.plusSeconds(5)));
+        assertEquals(List.of(MINUTE_0 + ".zst"), keys);
+        assertNull(manager.currentCycle(), "nothing open until a record comes");
+    }
+
+    @Test
+    void aMinuteWithNoRecordsIsNeverWritten() {
+        CycleManager manager = manager(Duration.ofSeconds(5));
+
+        manager.expire(nanos(MINUTE_2));
+        manager.flush();
+
+        verify(s3Client, never()).putObject(any(Consumer.class), any(RequestBody.class));
+    }
+
+    @Test
+    void aRecordForAMinuteAlreadyWrittenGoesIntoTheNextFile() throws Exception {
+        List<String> keys = capturingKeys();
+        CycleManager manager = manager(Duration.ofSeconds(5));
+        CycleBufferTest.write(manager.currentCycle(), "first".getBytes());
+        manager.expire(nanos(MINUTE_1.plusSeconds(10)));
+
+        long late = nanos(MINUTE_0.plusSeconds(59));
+        assertTrue(manager.isPastCurrentCycle(late));
+        manager.rotate(manager.cycleStart(late));
+        CycleBufferTest.write(manager.resolveTarget(manager.cycleStart(late)), "late".getBytes());
+        manager.flush();
+
+        assertEquals(List.of(MINUTE_0 + ".zst", MINUTE_1 + ".zst"), keys);
     }
 }

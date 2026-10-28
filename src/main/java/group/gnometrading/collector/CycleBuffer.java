@@ -38,6 +38,7 @@ final class CycleBuffer {
     private final ZstdDirectBufferCompressingStreamNoFinalizer compressor;
     private ByteBuffer output;
     private boolean finished;
+    private boolean empty = true;
     private boolean released;
 
     CycleBuffer(DirectBufferPool pool, LocalDateTime timestamp, String s3Key) {
@@ -65,6 +66,7 @@ final class CycleBuffer {
 
     /** Compresses {@code length} bytes of {@code source} from {@code offset}. */
     void write(DirectBuffer source, int offset, int length) throws IOException {
+        empty &= length == 0;
         for (int done = 0; done < length; ) {
             final int chunk = Math.min(STAGING_CAPACITY, length - done);
             stagingView.putBytes(0, source, offset + done, chunk);
@@ -75,6 +77,7 @@ final class CycleBuffer {
 
     /** Compresses {@code length} bytes of {@code source} from {@code index}, leaving its position and limit alone. */
     void write(ByteBuffer source, int index, int length) throws IOException {
+        empty &= length == 0;
         for (int done = 0; done < length; ) {
             final int chunk = Math.min(STAGING_CAPACITY, length - done);
             staging.clear();
@@ -89,6 +92,11 @@ final class CycleBuffer {
         compressor.compress(staging);
     }
 
+    /** Whether nothing was written to it: a minute with no records, which isn't worth a file. */
+    boolean isEmpty() {
+        return empty;
+    }
+
     /** Bytes of the finished file; only meaningful after {@link #finish}. */
     int compressedSize() {
         return output.position();
@@ -100,9 +108,8 @@ final class CycleBuffer {
             return;
         }
         finished = true;
-        // zstd writes no frame for a stream it never compressed into. A minute can end with no records (its stream
-        // flushed on stop or removal before anything arrived), and its file must still be valid zstd for readers.
-        // A minute with no records at all, on a quiet market, never opens a file; coverage comes from heartbeats.
+        // zstd writes no frame for a stream it never compressed into; an empty minute is released, not uploaded, but
+        // a finished buffer must still be a whole frame.
         compressStaged(0);
         compressor.close();
         pool.release(staging);

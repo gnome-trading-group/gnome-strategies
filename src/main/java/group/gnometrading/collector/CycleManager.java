@@ -13,6 +13,11 @@ import java.time.ZoneId;
  * <p>Runs on the thread receiving data, so the per-event methods take epoch nanoseconds and never allocate. A
  * {@link LocalDateTime} is built only on rotation, once per cycle, for the file's key.
  *
+ * <p>Cycles end by event time, when a record of a later cycle arrives, and by the wall clock ({@link #expire}), so a
+ * quiet market's last minute is written when it ends rather than whenever its next record comes, or lost with the
+ * process. A cycle with no records is released, never written. A record arriving for a cycle already handed over goes
+ * into a new cycle after it: that minute's file is written once, and a second copy would only be refused.
+ *
  * <p>{@link #flush} hands over the open cycles, the current one partial, when its stream stops: the process shutting
  * down or the stream being quarantined. It must run once the thread receiving data has stopped.
  *
@@ -37,8 +42,11 @@ final class CycleManager {
     private final long cycleNanos;
     private final long gracePeriodNanos;
 
+    // Null once the wall clock has handed the current cycle over, until a record opens the next.
     private CycleBuffer currentCycle;
     private long currentStartNanos;
+    // The earliest a new cycle may start: after the last one handed over by the wall clock.
+    private long nextStartNanos = Long.MIN_VALUE;
     private CycleBuffer previousCycle;
     private long previousStartNanos;
 
@@ -82,9 +90,9 @@ final class CycleManager {
         return eventNanos - Math.floorMod(eventNanos, cycleNanos);
     }
 
-    /** Whether {@code eventNanos} falls in a cycle after the current one. */
+    /** Whether {@code eventNanos} falls in a cycle after the current one, or there is no current one. */
     boolean isPastCurrentCycle(long eventNanos) {
-        return eventNanos - currentStartNanos >= cycleNanos;
+        return currentCycle == null || eventNanos - currentStartNanos >= cycleNanos;
     }
 
     /** Uploads only cycles starting at or after {@code epochNanos}; {@link Long#MAX_VALUE} uploads none. */
@@ -98,7 +106,7 @@ final class CycleManager {
     }
 
     private void handOver(CycleBuffer cycle, long startNanos) {
-        if (startNanos >= writeFromNanos && startNanos < writeUntilNanos) {
+        if (!cycle.isEmpty() && startNanos >= writeFromNanos && startNanos < writeUntilNanos) {
             uploader.upload(cycle, bucketName);
         } else {
             cycle.release();
@@ -111,13 +119,14 @@ final class CycleManager {
             previousCycle = null;
         }
 
-        CycleBuffer next = newCycle(newCycleStartNanos);
-        logger.logf(LogMessage.DEBUG, "Switching cycle to %s from %s", next.timestamp(), currentCycle.timestamp());
+        final long startNanos = Math.max(newCycleStartNanos, nextStartNanos);
+        CycleBuffer next = newCycle(startNanos);
+        logger.logf(LogMessage.DEBUG, "Switching cycle to %s", next.timestamp());
 
         previousCycle = currentCycle;
         previousStartNanos = currentStartNanos;
         currentCycle = next;
-        currentStartNanos = newCycleStartNanos;
+        currentStartNanos = startNanos;
     }
 
     void maybeExpireGracePeriod(long eventNanos) {
@@ -127,6 +136,22 @@ final class CycleManager {
         if (eventNanos - currentStartNanos >= gracePeriodNanos) {
             handOver(previousCycle, previousStartNanos);
             previousCycle = null;
+        }
+    }
+
+    /**
+     * Hands over, by the wall clock, the previous cycle once the current one is past its grace, and the current one
+     * once it has ended and its grace passed. On the thread receiving data, between events; allocates nothing.
+     */
+    void expire(long wallNanos) {
+        if (closed || currentCycle == null) {
+            return;
+        }
+        maybeExpireGracePeriod(wallNanos);
+        if (wallNanos - currentStartNanos >= cycleNanos + gracePeriodNanos) {
+            handOver(currentCycle, currentStartNanos);
+            nextStartNanos = currentStartNanos + cycleNanos;
+            currentCycle = null;
         }
     }
 
@@ -173,7 +198,10 @@ final class CycleManager {
             handOver(previousCycle, previousStartNanos);
             previousCycle = null;
         }
-        logger.logf(LogMessage.DEBUG, "Flushing partial cycle %s", currentCycle.timestamp());
-        handOver(currentCycle, currentStartNanos);
+        if (currentCycle != null) {
+            logger.logf(LogMessage.DEBUG, "Flushing partial cycle %s", currentCycle.timestamp());
+            handOver(currentCycle, currentStartNanos);
+            currentCycle = null;
+        }
     }
 }

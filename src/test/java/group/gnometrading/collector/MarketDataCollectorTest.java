@@ -160,11 +160,23 @@ class MarketDataCollectorTest {
     }
 
     @Test
-    void testEmptyBufferStillUploads() throws Exception {
+    void aMinuteWithNoRecordsIsNotUploaded() throws Exception {
         date(2025, 4, 1, 12, 0, 0);
         MarketDataCollector collector = collector(Duration.ZERO);
 
         collector.onEvent(bufWithTimestamp("", 2025, 4, 1, 12, 1, 1), 0, false);
+
+        verify(s3Client, never())
+                .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
+    }
+
+    @Test
+    void aQuietMarketsMinuteIsUploadedOnceItHasEndedByTheWallClock() throws Exception {
+        date(2025, 4, 1, 12, 0, 0);
+        MarketDataCollector collector = collector(Duration.ofSeconds(5));
+        collector.onEvent(bufWithTimestamp("snapshot", 2025, 4, 1, 12, 0, 10), 0, false);
+
+        collector.expire(CycleManager.epochNanos(Instant.parse("2025-04-01T12:01:05Z")));
 
         verify(s3Client, times(1))
                 .putObject(ArgumentMatchers.<Consumer<PutObjectRequest.Builder>>any(), any(RequestBody.class));
@@ -238,6 +250,7 @@ class MarketDataCollectorTest {
         date(2025, 4, 1, 12, 0, 0);
         MarketDataCollector collector = collector(Duration.ZERO);
 
+        collector.onEvent(bufWithTimestamp("first", 2025, 4, 1, 12, 0, 10), 0, false);
         collector.onEvent(bufWithTimestamp("future", 2025, 4, 1, 12, 1, 30), 0, false);
 
         verify(s3Client, times(1))

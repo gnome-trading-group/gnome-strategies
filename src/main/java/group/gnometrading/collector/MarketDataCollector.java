@@ -97,6 +97,14 @@ public final class MarketDataCollector implements EventHandler<StreamRecord> {
         cycleManager.writeUntil(epochNanos);
     }
 
+    /**
+     * Hands over the minutes that have ended by the wall clock ({@code epochNanos}), so a quiet market's are written when
+     * they end. On the thread feeding it, between events; allocates nothing.
+     */
+    public void expire(long epochNanos) {
+        cycleManager.expire(epochNanos);
+    }
+
     /** Hands this stream's open minutes to the uploader; once the thread feeding it has stopped. */
     public void flush() {
         cycleManager.flush();
