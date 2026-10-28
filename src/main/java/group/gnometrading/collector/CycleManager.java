@@ -105,12 +105,14 @@ final class CycleManager {
         writeUntilNanos = epochNanos;
     }
 
-    private void handOver(CycleBuffer cycle, long startNanos) {
+    /** Uploads the cycle if it has records and falls in the write window, else releases it; true if uploaded. */
+    private boolean handOver(CycleBuffer cycle, long startNanos) {
         if (!cycle.isEmpty() && startNanos >= writeFromNanos && startNanos < writeUntilNanos) {
             uploader.upload(cycle, bucketName);
-        } else {
-            cycle.release();
+            return true;
         }
+        cycle.release();
+        return false;
     }
 
     void rotate(long newCycleStartNanos) {
@@ -199,8 +201,17 @@ final class CycleManager {
             previousCycle = null;
         }
         if (currentCycle != null) {
-            logger.logf(LogMessage.DEBUG, "Flushing partial cycle %s", currentCycle.timestamp());
-            handOver(currentCycle, currentStartNanos);
+            final boolean empty = currentCycle.isEmpty();
+            final LocalDateTime timestamp = currentCycle.timestamp();
+            if (handOver(currentCycle, currentStartNanos)) {
+                logger.logf(LogMessage.DEBUG, "Flushing partial cycle %s: uploading what it holds", timestamp);
+            } else {
+                logger.logf(
+                        LogMessage.DEBUG,
+                        "Flushing partial cycle %s: dropped, %s",
+                        timestamp,
+                        empty ? "it holds no records" : "outside this collector's write window");
+            }
             currentCycle = null;
         }
     }
