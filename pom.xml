@@ -8,8 +8,19 @@
         <version>1.5.3</version>
     </parent>
 
-    <artifactId>gnome-strategies</artifactId>
+    <!--
+        Builds and releases runtime/, the strategy runtime the orchestrator and the backtest engine run strategies on
+        (released as gnome-strategies and pinned by them). strategies/ is a separate project on purpose: its strategies
+        build against the platform release they pin, never this build's runtime, and they are run by commit, not
+        released (see strategies/pom.xml and CLAUDE.md).
+    -->
+    <artifactId>gnome-strategies-parent</artifactId>
     <version>1.7.10-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>runtime</module>
+    </modules>
 
     <scm>
         <connection>scm:git:git@github.com:gnome-trading-group/gnome-strategies.git</connection>
@@ -33,88 +44,19 @@
         </repository>
     </repositories>
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>software.amazon.awssdk</groupId>
-                <artifactId>bom</artifactId>
-                <version>2.31.11</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
-    <dependencies>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-core</artifactId>
-            <version>1.16.0</version>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-registry</artifactId>
-            <version>1.46.1</version>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-schemas</artifactId>
-            <version>2.0.1</version>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-sequencer</artifactId>
-            <version>2.2.1</version>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-oms</artifactId>
-            <version>1.12.5</version>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-logging</artifactId>
-            <version>1.2.2</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>s3</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>dynamodb</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>group.gnometrading</groupId>
-            <artifactId>gnome-market-data-core</artifactId>
-            <version>3.0.0</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>sso</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.awssdk</groupId>
-            <artifactId>ssooidc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-release-plugin</artifactId>
+                    <configuration>
+                        <!-- The release gives the parent and runtime the one version the bump action chose. -->
+                        <autoVersionSubmodules>true</autoVersionSubmodules>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -1,30 +1,43 @@
 # CLAUDE.md
 
-gnome-strategies is a Java library (no service, no stacks) holding the strategy framework: the `StrategyAgent` base
-class, the Python bridge, the factory that builds a strategy from its configured class and args, and a few shared
-pieces (the market data collector writers, an MBO book). It contains no concrete production strategies: the live
-ones are Python classes in gnomepy-research (`gnomepy_research.sessions.<name>.strategy:<Class>`). A strategy runs as
-a session: gnome-launcher asks the registry's `strategy-sessions/launch`, which starts an EC2 instance running
-gnome-orchestrator, which builds the strategy through this library inside one JVM with the OMS and gateways.
+gnome-strategies holds two things with two lifecycles:
+
+- `runtime/` - the strategy runtime: the `StrategyAgent` base class, the Python bridge, the factory that builds a
+  strategy from its configured class and args, and the exit wind-down. A Java
+  library (no service, no stacks), released as the `gnome-strategies` artifact and pinned by gnome-orchestrator
+  (sessions) and gnome-backtest.
+- `strategies/` - the production Java strategies (`EsportsPmMaker` ...). Never released. A session or backtest runs
+  them by commit, built against the orchestrator release `strategies/pom.xml` pins (`platform.orchestrator`). A
+  separate Maven project, deliberately not part of the root build.
+
+Most live strategies are still Python classes in gnomepy-research (`gnomepy_research.sessions.<name>.strategy:<Class>`).
+A strategy runs as a session: gnome-launcher asks the registry's `strategy-sessions/launch`, which starts an EC2
+instance running gnome-orchestrator, which builds the strategy through the runtime inside one JVM with the OMS and
+gateways.
 
 ## Commands
 
 ```bash
-mvn test                                                             # all tests; spotless + checkstyle run at validate
-mvn test -Dtest=group.gnometrading.strategies.StrategyExitTest       # one test class, full class name
+mvn test                                                             # runtime: all tests; spotless + checkstyle at validate
+mvn test -Dtest=group.gnometrading.strategies.StrategyExitTest       # one runtime test class, full class name
 mvn spotless:apply                                                   # fix formatting (palantir-java-format)
-mvn install                                                          # put the SNAPSHOT in ~/.m2 for gnome-orchestrator/gnome-backtest
+mvn install                                                          # runtime SNAPSHOT into ~/.m2 for gnome-orchestrator/gnome-backtest
+
+mvn -f strategies/pom.xml test                                       # strategies, against the pinned platform
+mvn -f strategies/pom.xml spotless:apply
+mvn -f strategies/pom.xml test -Dplatform.orchestrator=<version>     # against another orchestrator, e.g. a local build
 ```
 
 - Maven, not Gradle. Build config comes from parent `gnome-parent` 1.5.3 (Java 17, spotless, checkstyle, surefire).
-- Dependencies resolve from GitHub Packages; `settings.xml` reads `GITHUB_ACTOR` / `GITHUB_TOKEN`.
+- Dependencies resolve from GitHub Packages; `settings.xml` reads `GITHUB_ACTOR` / `GITHUB_TOKEN` (CI). Locally,
+  plain `mvn` uses `~/.m2/settings.xml`; the GitHub CLI's token has no `read:packages` scope.
 - Spotless and checkstyle are bound to `validate`, so a formatting slip fails `mvn test`. Run `spotless:apply` first.
 
 ## Layout
 
-All code is in `src/main/java/group/gnometrading/`.
+`runtime/src/main/java/group/gnometrading/`:
 
-Strategy framework (`strategies/`):
+Strategy runtime (`strategies/`):
 - `StrategyAgent` - abstract base. A `GnomeAgent` on a `HOT_PATH` thread. `doWork()` polls exec reports before
   market data so fills are seen before the next tick. Subclasses implement `onMarketData` (book-family records) and
   `onExecutionReport`; optional `onStreamEvent` (non-book streams such as vendor feeds), `onStreamsConfigured`,
@@ -38,22 +51,40 @@ Strategy framework (`strategies/`):
   `REJECTED`, `TIMED_OUT`); the orchestrator's `SessionExit` is the listener.
 - `StrategyFactory` - builds a Java strategy by class name. Constructor must take the 6 infrastructure params first
   (strategy id, md buffer, exec report buffer, intent buffer, `PositionView`, `SecurityMaster`), then its own args,
-  matched to config by parameter name (hence `<parameters>true</parameters>` in `pom.xml`).
+  matched to config by parameter name (hence `<parameters>true</parameters>` in both poms). Every configured arg must
+  name a parameter; a reference-type parameter left out of the config is passed null (launchers set some args only for
+  some sessions), a primitive one must be configured. Generic parameters (`List<SomeRecord>`) are converted through
+  Jackson element by element.
 - `PythonStrategyAgent` - bridges a JPype proxy (`PythonStrategyCallback`, set via `setCallback` before
   `Orchestrator.main()`) to `StrategyAgent`. Callbacks return `List<Intent>`. Used by gnomepy's strategy runner.
 
-Other packages:
-- `collector/` - `MarketDataCollector` (normalized records) and `RawDataCollector` (raw venue frames) write zstd
-  minute files into pooled direct memory; `CycleUploader` uploads them to S3 off the data thread, spaced out.
-  Used by gnome-orchestrator's `collectors/` (the market data collector process), not by strategies.
-- `books/` - `MboBook` (red-black tree of `Limit`s holding `Order`s) and the older `MboBookStrategy` base.
-  The first code in the repo; nothing uses it today, since there are no Java strategies yet. Kept for when there are.
+`strategies/src/main/java/group/gnometrading/strategies/`:
 
-Tests mirror the packages under `src/test/java`. `StrategyExitTest` covers the wind-down; `StrategyFactoryTest`
-the argument matching. `market-data/` holds local sample files and is gitignored.
+- `esports/`:
+  - `EsportsPmMaker` - esports cross-venue arb, maker on Polymarket International (port of gnomepy-research's
+    `esports_cross_venue_arb__pm_maker`): rests a post-only bid on each team priced off the cheapest hedge on the other
+    venues (`MakerQuote`, band anchored where the hedge reaches the quoted listing's minimum order), and on a fill buys
+    the other team at once (`Completion`, limited at the cheapest route + `completion_slippage` so it crosses; an
+    unfilled hedge is re-planned on the next hedge-venue book update). Play gate from the venues' live feeds
+    (`LiveGameWatch`: Polymarket sports websocket, Gamma event poll, Kalshi milestone live data, on daemon threads
+    publishing through volatiles) or recorded `game_states` (`ReplayGameWatch`). Config args are snake_case to match the
+    launcher's (`@SuppressWarnings("checkstyle:ParameterName")` on the public constructor), packed into `Settings`;
+    registry reads go through `ListingFacts` so tests (and the allocation test) use an in-memory fake.
+  - Metric streams `esports_arb_orders` and `game_state` keep the Python strategy's names and columns, so either can
+    replay the other's sessions.
+
+Tests mirror the packages under each module's `src/test/java`. `StrategyExitTest` covers the wind-down;
+`StrategyFactoryTest` the argument matching. In `strategies/`, `MakerHarness` drives the maker through its buffers on
+the Python tests' fixtures, and `EsportsPmMakerFactoryTest` builds it from a launcher-shaped config through the
+platform's own `StrategyFactory`, so a pin to a release that can't run the maker fails the build. `market-data/` holds
+local sample files and is gitignored.
 
 ## Conventions and invariants
 
+- Platform changes go one way: change `runtime/`, release it, pin it in gnome-orchestrator and gnome-backtest,
+  release those, then bump `platform.orchestrator` in `strategies/pom.xml`. `strategies/` never builds against `runtime/`'s
+  source, so a strategy needing a new runtime feature fails to compile until that path is done: at build time, not
+  in a session.
 - Production code only. Backtest drivers, simulation and fill models live in gnome-backtest/gnomepy. The existing
   hooks the backtest driver needs (`simulateProcessingTime`, `submitMarketData`, `submitExecReport`,
   `getIntentBuffer`, `getMarketDataBuffer`, `createWithOwnBuffers`, `PythonStrategyAgent.create`) are the boundary;
@@ -72,8 +103,13 @@ the argument matching. `market-data/` holds local sample files and is gitignored
 - Config: session config keys become env vars (`.` to `_`, uppercased) in the registry launcher. Structured values go
   as one JSON env var: every `strategy.args.*` key is collected into `STRATEGY_ARGS_JSON` (the orchestrator falls back
   to `strategy.args.*` properties when it's unset), and `simulation` becomes `SIMULATION_JSON`.
-- Adding a constructor arg to a Java strategy changes its config contract: the factory needs exactly the configured
-  arg names, no more, no fewer.
+- Adding a constructor arg to a Java strategy changes its config contract: a configured name with no parameter fails
+  the session, so remove args from rules before removing parameters. Make an arg a boxed/reference type with a default
+  applied in the strategy unless every config must set it.
+- `StrategyAgent.publishIntent` stamps intents with agrona's `SystemEpochNanoClock`, whose `nanoTime()` builds an
+  `Instant`. Once C2 compiles it, escape analysis removes that allocation (zero bytes per call after ~10k calls in a
+  loop). A short allocation test can still catch it at the `publishIntent` call site before then, so allocation tests
+  pass their own clock through the 7-arg constructor and measure only the strategy's code.
 
 ## Operations
 
@@ -97,7 +133,10 @@ the argument matching. `market-data/` holds local sample files and is gitignored
   remain; a clean INFO exit is labelled `route: silent`, recorded on the Alerts page but not posted to Slack, unless
   `notifyExit`), marks the session STOPPING with `stoppedBy: strategy`, closes and exits 0, ending as STOPPED. A WARNING
   lists each held listing and why (`TOO_SMALL`, `REJECTED`, `TIMED_OUT`); those positions need a human decision.
-- Release: push to `main` runs `.github/workflows/bump-and-deploy.yml` (gnome-build-tools), which does a
-  maven-release-plugin release and publishes to GitHub Packages. Consumers pin versions: gnome-orchestrator
-  (sessions and collectors) and gnome-backtest. For gnomepy backtests to see a change, rebuild gnome-backtest (and
-  gnome-oms if touched) on matching versions. Live sessions pick it up only via a new orchestrator release.
+- Release: a push to `main` touching `runtime/`, the root `pom.xml` or `settings.xml` runs
+  `.github/workflows/bump-and-deploy.yml` (gnome-build-tools): a maven-release-plugin release of the parent and
+  `runtime/`, published to GitHub Packages. Consumers pin versions: gnome-orchestrator (sessions) and
+  gnome-backtest. A push touching only `strategies/` releases nothing.
+- CI: `strategies.yml` tests `strategies/` on every push to any branch against its pinned platform;
+  `runtime-tests.yml` tests `runtime/` on branches other than main.
+- `strategy/*` branches may be pushed to run a backtest or a paper session from a commit.

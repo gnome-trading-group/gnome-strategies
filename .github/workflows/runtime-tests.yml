@@ -1,0 +1,30 @@
+name: Runtime tests
+# The release workflow tests the runtime on main; this tests it on other branches.
+on:
+  push:
+    branches-ignore:
+      - 'master'
+      - 'main'
+    paths:
+      - 'pom.xml'
+      - 'runtime/**'
+      - 'settings.xml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+          server-id: github
+      - name: Test runtime
+        run: mvn -B -s settings.xml verify
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

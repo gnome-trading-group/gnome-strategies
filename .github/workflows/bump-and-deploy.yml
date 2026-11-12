@@ -1,9 +1,15 @@
 name: Bump and Deploy
+# Releases the strategy runtime (runtime/) as gnome-strategies. A push that only changes strategies/ releases nothing:
+# strategies run by commit and never need a release.
 on:
   push:
     branches:
       - 'master'
       - 'main'
+    paths:
+      - 'pom.xml'
+      - 'runtime/**'
+      - 'settings.xml'
 
 jobs:
   release:

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>group.gnometrading</groupId>
+        <artifactId>gnome-parent</artifactId>
+        <version>1.5.3</version>
+    </parent>
+
+    <!--
+        The production strategies, run by commit and never released, so the version means nothing. Not part of the
+        root build: they build against the platform release pinned below, and a runtime release must not wait on
+        strategies that need it.
+    -->
+    <artifactId>gnome-trading-strategies</artifactId>
+    <version>0-SNAPSHOT</version>
+
+    <repositories>
+        <repository>
+            <id>github</id>
+            <name>Internal Projects</name>
+            <url>https://maven.pkg.github.com/gnome-trading-group/*</url>
+        </repository>
+    </repositories>
+
+    <properties>
+        <!--
+            The orchestrator release this commit's strategies are built, tested and run on: sessions launch on it. The
+            launcher, start-session.sh and gnomepy read this property from this file at the commit. Bump it to take a
+            platform update. Backtests run on the latest gnome-backtest and record its version.
+        -->
+        <platform.orchestrator>1.38.0</platform.orchestrator>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <!-- The orchestrator's shaded jar, the one sessions run: the strategy runtime, OMS, schemas and registry. -->
+        <dependency>
+            <groupId>group.gnometrading</groupId>
+            <artifactId>gnome-orchestrator</artifactId>
+            <version>${platform.orchestrator}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- StrategyFactory matches configured args to constructor parameters by name. -->
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

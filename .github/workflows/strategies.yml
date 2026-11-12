@@ -1,0 +1,28 @@
+name: Strategies
+# Tests the production strategies on every push to any branch, against the platform release strategies/pom.xml pins.
+# Sessions and backtests run a strategy by its commit, so a commit is only worth running once this is green.
+on:
+  push:
+    paths:
+      - 'strategies/**'
+      - 'settings.xml'
+      - '.github/workflows/strategies.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+          server-id: github
+      - name: Test strategies
+        run: mvn -B -s settings.xml -f strategies/pom.xml verify
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
