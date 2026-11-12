@@ -30,7 +30,7 @@
             launcher, start-session.sh and gnomepy read this property from this file at the commit. Bump it to take a
             platform update. Backtests run on the latest gnome-backtest and record its version.
         -->
-        <platform.orchestrator>1.38.0</platform.orchestrator>
+        <platform.orchestrator>1.39.0</platform.orchestrator>
         <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 

@@ -44,9 +44,36 @@ public final class StrategyFactory {
             PositionView positionView,
             SecurityMaster securityMaster,
             Map<String, Object> strategyArgs) {
+        return create(
+                StrategyFactory.class.getClassLoader(),
+                className,
+                strategyId,
+                marketDataBuffer,
+                execReportBuffer,
+                intentBuffer,
+                positionView,
+                securityMaster,
+                strategyArgs);
+    }
+
+    /**
+     * As {@link #create}, loading the class through {@code loader}: a session runs a strategy compiled from its commit
+     * at start, outside the host's own classpath, through a loader whose parent is the host's, so the runtime, OMS and
+     * schema classes the strategy uses stay the host's.
+     */
+    public static StrategyAgent create(
+            ClassLoader loader,
+            String className,
+            int strategyId,
+            SequencedRingBuffer<?> marketDataBuffer,
+            SequencedRingBuffer<OrderExecutionReport> execReportBuffer,
+            SequencedRingBuffer<Intent> intentBuffer,
+            PositionView positionView,
+            SecurityMaster securityMaster,
+            Map<String, Object> strategyArgs) {
         final Class<?> clazz;
         try {
-            clazz = Class.forName(className);
+            clazz = Class.forName(className, true, loader);
         } catch (ClassNotFoundException e) {
             throw new IllegalArgumentException("Strategy class not found: " + className, e);
         }
