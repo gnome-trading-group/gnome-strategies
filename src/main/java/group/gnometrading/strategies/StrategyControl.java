@@ -8,11 +8,14 @@ public interface StrategyControl {
      * set, what it holds is sold (or bought back) with market orders until it is flat or {@code timeoutMillis} has
      * passed. The session then reports why it exited and shuts down as STOPPED.
      *
+     * <p>The exit is always recorded on the Alerts page. A clean one is only posted to Slack when {@code notifyExit}
+     * is set; positions left after being asked to close them are posted regardless.
+     *
      * <p>Only the first request counts; later ones are ignored.
      *
      * @return true if this request is the one the session acts on
      */
-    boolean requestExit(String reason, boolean flatten, long timeoutMillis);
+    boolean requestExit(String reason, boolean flatten, long timeoutMillis, boolean notifyExit);
 
     /** True once an exit has been requested. */
     boolean isExiting();

@@ -106,7 +106,7 @@ class StrategyExitTest {
         positions.get(1).leavesBuyQty = UNIT;
         positions.get(2).netQuantity = 3 * UNIT;
 
-        assertTrue(strategy.requestExit("match went live", false, 60_000));
+        assertTrue(strategy.requestExit("match went live", false, 60_000, false));
         pass();
 
         assertEquals(2, sent.size());
@@ -121,6 +121,7 @@ class StrategyExitTest {
         assertEquals(1, results.size());
         ExitResult result = results.get(0);
         assertEquals("match went live", result.reason());
+        assertFalse(result.notifyExit());
         assertFalse(result.timedOut());
         assertEquals(List.of(new ExitResult.HeldPosition(2, 3 * UNIT, ExitResult.Why.KEPT)), result.held());
         assertFalse(result.leftPositions(), "keeping a position was the strategy's choice");
@@ -129,7 +130,7 @@ class StrategyExitTest {
 
     @Test
     void theStrategyHearsNothingOnceItHasAskedToExit() throws Exception {
-        strategy.requestExit("done", false, 60_000);
+        strategy.requestExit("done", false, 60_000, false);
         strategy.submitMarketData(new Mbp10Schema());
         pass();
 
@@ -140,7 +141,7 @@ class StrategyExitTest {
     void flattenSellsALongWithAMarketOrderSizedToThePosition() throws Exception {
         positions.get(1).netQuantity = 5 * UNIT;
 
-        strategy.requestExit("done", true, 60_000);
+        strategy.requestExit("done", true, 60_000, false);
         pass();
         assertEquals(2, sent.size(), "the cancels go first");
 
@@ -169,7 +170,7 @@ class StrategyExitTest {
     void flattenBuysBackAShort() throws Exception {
         positions.get(2).netQuantity = -2 * UNIT;
 
-        strategy.requestExit("done", true, 60_000);
+        strategy.requestExit("done", true, 60_000, false);
         pass();
         clock[0] += WindDown.RETRY_INTERVAL_NANOS;
         pass();
@@ -183,7 +184,7 @@ class StrategyExitTest {
     @Test
     void aCloseIsNotRepeatedWhileItWorksAndIsResentForWhatAPartialFillLeft() throws Exception {
         positions.get(1).netQuantity = 5 * UNIT;
-        strategy.requestExit("done", true, 60_000);
+        strategy.requestExit("done", true, 60_000, false);
         pass();
         clock[0] += WindDown.RETRY_INTERVAL_NANOS;
         pass();
@@ -207,7 +208,7 @@ class StrategyExitTest {
     @Test
     void runningOutOfTimeReportsWhatIsStillHeld() throws Exception {
         positions.get(1).netQuantity = 5 * UNIT;
-        strategy.requestExit("done", true, 3_000);
+        strategy.requestExit("done", true, 3_000, false);
         pass();
 
         clock[0] += 3 * SECOND;
@@ -225,9 +226,17 @@ class StrategyExitTest {
     }
 
     @Test
+    void theRequestsNotifyChoiceReachesTheSession() throws Exception {
+        strategy.requestExit("done", false, 60_000, true);
+        pass();
+
+        assertTrue(results.get(0).notifyExit());
+    }
+
+    @Test
     void onlyTheFirstRequestCounts() throws Exception {
-        assertTrue(strategy.requestExit("first", false, 60_000));
-        assertFalse(strategy.requestExit("second", true, 60_000));
+        assertTrue(strategy.requestExit("first", false, 60_000, false));
+        assertFalse(strategy.requestExit("second", true, 60_000, false));
         assertTrue(strategy.isExiting());
         pass();
 
@@ -236,7 +245,7 @@ class StrategyExitTest {
 
     @Test
     void anExitRequestedFromAnotherThreadIsPickedUp() throws Exception {
-        Thread other = new Thread(() -> strategy.requestExit("from the feed", false, 60_000));
+        Thread other = new Thread(() -> strategy.requestExit("from the feed", false, 60_000, false));
         other.start();
         other.join();
         pass();
@@ -248,7 +257,7 @@ class StrategyExitTest {
     void withoutAnExitConfiguredTheStrategyIsOnlySilenced() throws Exception {
         SequencedRingBuffer<Intent> intents = new SequencedRingBuffer<>(Intent::new, new GlobalSequence());
         TestStrategy unconfigured = new TestStrategy(intents, positions, clock);
-        unconfigured.requestExit("done", true, 0);
+        unconfigured.requestExit("done", true, 0, false);
         unconfigured.submitMarketData(new Mbp10Schema());
         unconfigured.doWork();
 
@@ -259,7 +268,7 @@ class StrategyExitTest {
     @Test
     void aRemainderTooSmallToTradeIsGivenUpOnAtOnce() throws Exception {
         positions.get(1).netQuantity = UNIT / 5;
-        strategy.requestExit("done", true, 300_000);
+        strategy.requestExit("done", true, 300_000, false);
         pass();
         clock[0] += WindDown.RETRY_INTERVAL_NANOS;
         pass();
@@ -281,7 +290,7 @@ class StrategyExitTest {
     @Test
     void aCloseRefusedEveryTimeIsGivenUpOnAfterAFewTries() throws Exception {
         positions.get(1).netQuantity = 5 * UNIT;
-        strategy.requestExit("done", true, 300_000);
+        strategy.requestExit("done", true, 300_000, false);
         pass();
         for (int i = 0; i < WindDown.MAX_CONSECUTIVE_REJECTS; i++) {
             assertTrue(results.isEmpty(), "still trying after " + i + " rejects");
@@ -299,7 +308,7 @@ class StrategyExitTest {
     @Test
     void aFillBetweenRejectsStartsTheCountAgain() throws Exception {
         positions.get(1).netQuantity = 5 * UNIT;
-        strategy.requestExit("done", true, 300_000);
+        strategy.requestExit("done", true, 300_000, false);
         pass();
         for (int i = 0; i < WindDown.MAX_CONSECUTIVE_REJECTS - 1; i++) {
             clock[0] += WindDown.RETRY_INTERVAL_NANOS;
@@ -318,7 +327,7 @@ class StrategyExitTest {
     @Test
     void aRejectBeforeAnyCloseWentOutIsNotHeldAgainstTheListing() throws Exception {
         positions.get(1).netQuantity = 5 * UNIT;
-        strategy.requestExit("done", true, 300_000);
+        strategy.requestExit("done", true, 300_000, false);
         pass();
         report(10, 100, ExecType.REJECT, RejectReason.INVALID_SIZE);
         clock[0] += WindDown.RETRY_INTERVAL_NANOS;
@@ -331,7 +340,7 @@ class StrategyExitTest {
     @Test
     void positionsKeptByChoiceSaySo() throws Exception {
         positions.get(2).netQuantity = UNIT;
-        strategy.requestExit("done", false, 300_000);
+        strategy.requestExit("done", false, 300_000, false);
         pass();
 
         assertEquals(ExitResult.Why.KEPT, results.get(0).held().get(0).why());

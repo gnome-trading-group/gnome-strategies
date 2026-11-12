@@ -191,9 +191,11 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     protected void registerMetrics(MetricRecorder metrics) {}
 
     @Override
-    public final boolean requestExit(String reason, boolean flatten, long timeoutMillis) {
+    public final boolean requestExit(String reason, boolean flatten, long timeoutMillis, boolean notifyExit) {
         return exitRequest.compareAndSet(
-                null, new ExitRequest(reason, flatten, TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMillis))));
+                null,
+                new ExitRequest(
+                        reason, flatten, TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMillis)), notifyExit));
     }
 
     @Override

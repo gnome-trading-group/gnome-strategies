@@ -45,6 +45,7 @@ final class WindDown {
 
     private String reason;
     private boolean flatten;
+    private boolean notifyExit;
     private long deadlineNanos;
     private boolean started;
     private boolean finished;
@@ -145,6 +146,7 @@ final class WindDown {
         started = true;
         reason = request.reason();
         flatten = request.flatten();
+        notifyExit = request.notifyExit();
         deadlineNanos = nowNanos + request.timeoutNanos();
         for (int i = 0; i < listingIds.length; i++) {
             // The first close waits a retry interval, so the OMS has seen the cancels before anything is sold.
@@ -197,7 +199,7 @@ final class WindDown {
             }
         }
         if (listener != null) {
-            listener.onExitComplete(new ExitResult(reason, flatten, timedOut, List.copyOf(held)));
+            listener.onExitComplete(new ExitResult(reason, flatten, notifyExit, timedOut, List.copyOf(held)));
         }
     }
 }

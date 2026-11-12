@@ -5,10 +5,12 @@ import java.util.List;
 /**
  * How a strategy's exit ended.
  *
+ * @param notifyExit whether the strategy asked for a clean exit to be posted to Slack, not just recorded
  * @param held every listing still holding a position, whether the strategy chose to keep it or couldn't close it
  * @param timedOut whether the time ran out with orders still working or, when flattening, positions still held
  */
-public record ExitResult(String reason, boolean flatten, boolean timedOut, List<HeldPosition> held) {
+public record ExitResult(
+        String reason, boolean flatten, boolean notifyExit, boolean timedOut, List<HeldPosition> held) {
 
     /** Why a position was still held when the exit ended. */
     public enum Why {

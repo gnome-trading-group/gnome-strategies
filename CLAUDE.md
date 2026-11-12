@@ -29,8 +29,8 @@ Strategy framework (`strategies/`):
   market data so fills are seen before the next tick. Subclasses implement `onMarketData` (book-family records) and
   `onExecutionReport`; optional `onStreamEvent` (non-book streams such as vendor feeds), `onStreamsConfigured`,
   `registerMetrics`. Output is only `publishIntent`, which stamps `timestampSend` and `strategyId`.
-- `StrategyControl` - `requestExit(reason, flatten, timeoutMillis)` / `isExiting()`; safe from any thread, first
-  request wins.
+- `StrategyControl` - `requestExit(reason, flatten, timeoutMillis, notifyExit)` / `isExiting()`; safe from any thread,
+  first request wins.
 - `WindDown` - runs after an exit request: cancels quotes on every listing, then (if `flatten`) closes positions
   with MARKET take intents sized to the position, retrying every 1s; gives up on a listing on `INVALID_SIZE`
   (too small) or 5 consecutive rejects.
@@ -48,7 +48,6 @@ Other packages:
   Used by gnome-orchestrator's `collectors/` (the market data collector process), not by strategies.
 - `books/` - `MboBook` (red-black tree of `Limit`s holding `Order`s) and the older `MboBookStrategy` base.
   The first code in the repo; nothing uses it today, since there are no Java strategies yet. Kept for when there are.
-- `testing/MarketDataWriter` - dumps records to a local file; used by gnome-orchestrator `MarketDataWriterOrchestrator`.
 
 Tests mirror the packages under `src/test/java`. `StrategyExitTest` covers the wind-down; `StrategyFactoryTest`
 the argument matching. `market-data/` holds local sample files and is gitignored.
@@ -95,7 +94,8 @@ the argument matching. `market-data/` holds local sample files and is gitignored
   `ORDER_REJECTED_HALTED` with a cause code. It stays halted until an operator resumes it. See gnome-oms's CLAUDE.md.
 - Graceful exit: a strategy calling `requestExit` stops its callbacks, cancels quotes, optionally flattens until the
   timeout, then `SessionExit` raises a `SESSION_EXITED` alert (INFO, or WARNING if asked to flatten and positions
-  remain), marks the session STOPPING with `stoppedBy: strategy`, closes and exits 0, ending as STOPPED. A WARNING
+  remain; a clean INFO exit is labelled `route: silent`, recorded on the Alerts page but not posted to Slack, unless
+  `notifyExit`), marks the session STOPPING with `stoppedBy: strategy`, closes and exits 0, ending as STOPPED. A WARNING
   lists each held listing and why (`TOO_SMALL`, `REJECTED`, `TIMED_OUT`); those positions need a human decision.
 - Release: push to `main` runs `.github/workflows/bump-and-deploy.yml` (gnome-build-tools), which does a
   maven-release-plugin release and publishes to GitHub Packages. Consumers pin versions: gnome-orchestrator
