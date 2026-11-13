@@ -16,11 +16,11 @@ import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
 import group.gnometrading.sequencer.metrics.MetricRecorder;
 import group.gnometrading.sm.Listing;
+import group.gnometrading.utils.SampledEpochNanoClock;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.agrona.concurrent.EpochNanoClock;
-import org.agrona.concurrent.SystemEpochNanoClock;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
@@ -84,7 +84,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
                 intentBuffer,
                 positionView,
                 securityMaster,
-                SystemEpochNanoClock.INSTANCE);
+                SampledEpochNanoClock.INSTANCE);
     }
 
     protected StrategyAgent(
