@@ -19,6 +19,7 @@ import group.gnometrading.sm.fee.FeeComponent;
 import group.gnometrading.sm.fee.FeeSchedule;
 import group.gnometrading.sm.fee.FeeTimeline;
 import group.gnometrading.strategies.StrategyAgent;
+import group.gnometrading.utils.SampledEpochNanoClock;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -27,7 +28,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.agrona.collections.Int2ObjectHashMap;
 import org.agrona.concurrent.EpochNanoClock;
-import org.agrona.concurrent.SystemEpochNanoClock;
 
 /**
  * Esports cross-venue arb, maker on Polymarket International: rest a bid on each team there, and when one fills buy
@@ -244,7 +244,7 @@ public final class EsportsPmMaker extends StrategyAgent {
                 positionView,
                 securityMaster,
                 ListingFacts.of(securityMaster),
-                SystemEpochNanoClock.INSTANCE,
+                SampledEpochNanoClock.INSTANCE,
                 new Settings(
                         legs,
                         maker_venue,

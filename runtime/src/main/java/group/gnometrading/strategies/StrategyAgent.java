@@ -11,6 +11,7 @@ import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderExecutionReportDecoder;
 import group.gnometrading.schemas.RecordType;
 import group.gnometrading.schemas.StreamRecord;
+import group.gnometrading.schemas.TriggerKind;
 import group.gnometrading.sequencer.SequencedEventHandler;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
@@ -66,6 +67,14 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private final AtomicReference<ExitRequest> exitRequest = new AtomicReference<>();
     // Set before the agent starts; without it (a backtest) an exit only silences the strategy.
     private WindDown windDown;
+
+    // The event being handled, copied onto every intent published while handling it (see publishIntent). Outside a
+    // dispatch, an intent is OTHER with no trigger: a wind-down step, say.
+    private long triggerSequence;
+    private TriggerKind triggerKind = TriggerKind.OTHER;
+    private long triggerTimestamp;
+    private long triggerOriginTimestamp;
+    private long dispatchTimestamp;
     // The strategy thread's own copy of exitRequest, so a pass reads the volatile once.
     private boolean exiting;
     private boolean metricsConfigured;
@@ -145,6 +154,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
         work += execReportPoller.poll();
         work += marketDataPoller.poll();
         if (exiting && windDown != null && !windDown.isFinished()) {
+            clearTrigger();
             windDown.step(exitRequest.get(), nanoClock.nanoTime());
             work++;
         }
@@ -217,27 +227,58 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     @Override
     public final void onSequencedEvent(long globalSequence, int templateId, UnsafeBuffer buffer, int length)
             throws Exception {
+        try {
+            dispatch(globalSequence, templateId, buffer);
+        } finally {
+            clearTrigger();
+        }
+    }
+
+    private void dispatch(long globalSequence, int templateId, UnsafeBuffer buffer) {
+        final long dispatchedAt = nanoClock.nanoTime();
         // Still drained once the strategy is exiting, so nothing writing to these buffers waits on them; the
         // wind-down reads the closes' outcomes.
-        if (exiting) {
-            if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID && windDown != null) {
-                execReport.wrap(buffer);
-                windDown.onExecutionReport(execReport);
-            }
-            return;
-        }
         if (templateId == OrderExecutionReportDecoder.TEMPLATE_ID) {
             execReport.wrap(buffer);
-            onExecutionReport(execReport);
-        } else if (templateId < records.length && records[templateId] != null) {
+            setTrigger(
+                    globalSequence,
+                    TriggerKind.EXEC_REPORT,
+                    execReportPoller.timestampNanos(),
+                    execReport.decoder.timestampRecv(),
+                    dispatchedAt);
+            if (!exiting) {
+                onExecutionReport(execReport);
+            } else if (windDown != null) {
+                windDown.onExecutionReport(execReport);
+            }
+        } else if (!exiting && templateId < records.length && records[templateId] != null) {
             StreamRecord record = records[templateId];
             record.wrap(buffer);
-            if (record.recordType.family() == Family.BOOK) {
+            final boolean book = record.recordType.family() == Family.BOOK;
+            setTrigger(
+                    globalSequence,
+                    book ? TriggerKind.MARKET_DATA : TriggerKind.STREAM,
+                    marketDataPoller.timestampNanos(),
+                    record.getRecvTimestamp(),
+                    dispatchedAt);
+            if (book) {
                 onMarketData(record);
             } else {
                 onStreamEvent(record.streamId(), record);
             }
         }
+    }
+
+    private void setTrigger(long sequence, TriggerKind kind, long arrivedAt, long originAt, long dispatchedAt) {
+        triggerSequence = sequence;
+        triggerKind = kind;
+        triggerTimestamp = arrivedAt;
+        triggerOriginTimestamp = originAt;
+        dispatchTimestamp = dispatchedAt;
+    }
+
+    private void clearTrigger() {
+        setTrigger(0, TriggerKind.OTHER, 0, 0, 0);
     }
 
     /** Called when a book record (a venue listing's market data) arrives. Implement trading logic here. */
@@ -253,11 +294,18 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      * Publish a trading intent to the outbound buffer for OMS processing.
      *
      * <p>Call this from {@link #onMarketData} or {@link #onExecutionReport} to submit, amend,
-     * or cancel orders.
+     * or cancel orders. The intent carries the event being handled (its global sequence, kind, arrival and platform
+     * receipt) and when handling began, so every order made for it can be traced back to what caused it.
      */
     protected final void publishIntent(Intent intent) {
         intent.encoder.timestampSend(nanoClock.nanoTime());
         intent.encoder.strategyId((short) strategyId);
+        intent.encoder
+                .triggerSequence(triggerSequence)
+                .triggerKind(triggerKind)
+                .triggerTimestamp(triggerTimestamp)
+                .triggerOriginTimestamp(triggerOriginTimestamp)
+                .dispatchTimestamp(dispatchTimestamp);
         intentBuffer.publishRaw(intent.buffer, intent.templateId(), intent.totalMessageSize());
     }
 

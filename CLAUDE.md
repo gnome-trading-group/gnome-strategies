@@ -29,7 +29,7 @@ mvn -f strategies/pom.xml spotless:apply
 mvn -f strategies/pom.xml test -Dplatform.orchestrator=<version>     # against another orchestrator, e.g. a local build
 ```
 
-- Maven, not Gradle. Build config comes from parent `gnome-parent` 1.5.3 (Java 17, spotless, checkstyle, surefire).
+- Maven, not Gradle. Build config comes from parent `gnome-parent` 1.7.0 (Java 17, spotless, checkstyle, surefire).
 - Dependencies resolve from GitHub Packages; `settings.xml` reads `GITHUB_ACTOR` / `GITHUB_TOKEN` (CI). Locally,
   plain `mvn` uses `~/.m2/settings.xml`; the GitHub CLI's token has no `read:packages` scope.
 - Spotless and checkstyle are bound to `validate`, so a formatting slip fails `mvn test`. Run `spotless:apply` first.
@@ -42,7 +42,10 @@ Strategy runtime (`strategies/`):
 - `StrategyAgent` - abstract base. A `GnomeAgent` on a `HOT_PATH` thread. `doWork()` polls exec reports before
   market data so fills are seen before the next tick. Subclasses implement `onMarketData` (book-family records) and
   `onExecutionReport`; optional `onStreamEvent` (non-book streams such as vendor feeds), `onStreamsConfigured`,
-  `registerMetrics`. Output is only `publishIntent`, which stamps `timestampSend` and `strategyId`.
+  `registerMetrics`. Output is only `publishIntent`, which stamps `timestampSend` and `strategyId`, and the trigger:
+  the event being handled when the intent was published (its global sequence, `TriggerKind`, ring arrival from the
+  poller, platform receipt from the record's or report's `timestampRecv`) and when handling began. An intent published
+  outside an event (a wind-down step) is `OTHER` with no trigger. The OMS copies the trigger onto every order it sends.
 - `StrategyControl` - `requestExit(reason, flatten, timeoutMillis, notifyExit)` / `isExiting()`; safe from any thread,
   first request wins.
 - `WindDown` - runs after an exit request: cancels quotes on every listing, then (if `flatten`) closes positions
@@ -107,10 +110,9 @@ local sample files and is gitignored.
 - Adding a constructor arg to a Java strategy changes its config contract: a configured name with no parameter fails
   the session, so remove args from rules before removing parameters. Make an arg a boxed/reference type with a default
   applied in the strategy unless every config must set it.
-- `StrategyAgent.publishIntent` stamps intents with agrona's `SystemEpochNanoClock`, whose `nanoTime()` builds an
-  `Instant`. Once C2 compiles it, escape analysis removes that allocation (zero bytes per call after ~10k calls in a
-  loop). A short allocation test can still catch it at the `publishIntent` call site before then, so allocation tests
-  pass their own clock through the 7-arg constructor and measure only the strategy's code.
+- Time is gnome-core's `SampledEpochNanoClock` (allocation-free); gnome-parent's checkstyle bans Agrona's
+  `SystemEpochNanoClock`, which builds an `Instant` per read. Allocation tests still pass their own clock through the
+  7-arg constructor, so they measure only the strategy's code.
 
 ## Operations
 
