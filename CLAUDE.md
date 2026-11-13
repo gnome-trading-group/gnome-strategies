@@ -46,6 +46,9 @@ Strategy runtime (`strategies/`):
   the event being handled when the intent was published (its global sequence, `TriggerKind`, ring arrival from the
   poller, platform receipt from the record's or report's `timestampRecv`) and when handling began. An intent published
   outside an event (a wind-down step) is `OTHER` with no trigger. The OMS copies the trigger onto every order it sends.
+  Given latency grids (`measureLatency`, by the orchestrator) it records `strat.transit` (platform receipt to ring
+  arrival, across hosts), `strat.queue` and `strat.decision` per exchange and kind; `activity()` counts market-data,
+  stream and execution-report events and intents sent (gnome-core `MetricCounters`, read by the session's samples).
 - `StrategyControl` - `requestExit(reason, flatten, timeoutMillis, notifyExit)` / `isExiting()`; safe from any thread,
   first request wins.
 - `WindDown` - runs after an exit request: cancels quotes on every listing, then (if `flatten`) closes positions

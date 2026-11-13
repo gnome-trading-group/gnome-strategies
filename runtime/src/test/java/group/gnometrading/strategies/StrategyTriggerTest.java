@@ -2,6 +2,10 @@ package group.gnometrading.strategies;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import group.gnometrading.latency.LatencyGrid;
+import group.gnometrading.latency.LatencyKey;
+import group.gnometrading.latency.MinuteHistograms;
+import group.gnometrading.latency.MinuteSummary;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.IntentDecoder;
 import group.gnometrading.schemas.Mbp10Schema;
@@ -117,6 +121,50 @@ class StrategyTriggerTest {
         assertEquals(IntentDecoder.triggerTimestampNullValue(), outside.triggerTimestamp());
         assertEquals(IntentDecoder.triggerOriginTimestampNullValue(), outside.originTimestamp());
         assertEquals(IntentDecoder.dispatchTimestampNullValue(), outside.dispatchTimestamp());
+    }
+
+    @Test
+    void queueAndDecisionAreMeasuredByTheTriggersExchangeAndKind() throws Exception {
+        final StepClock clock = new StepClock();
+        final PublishingStrategy strategy = new PublishingStrategy(new GlobalSequence(), clock);
+        final String[] kinds = {"NONE", "MARKET_DATA", "EXEC_REPORT", "STREAM", "RISK", "OTHER"};
+        final MinuteHistograms histograms = new MinuteHistograms(3 * LatencyGrid.size(1, 1, kinds.length));
+        final int[] exchanges = {3};
+        final String[] names = {"KALSHI"};
+        final String[] noAction = {""};
+        strategy.measureLatency(
+                new LatencyGrid(histograms, 7, "strat.transit", exchanges, names, noAction, kinds),
+                new LatencyGrid(histograms, 1, "strat.queue", exchanges, names, noAction, kinds),
+                new LatencyGrid(histograms, 2, "strat.decision", exchanges, names, noAction, kinds));
+        final OrderExecutionReport report = new OrderExecutionReport();
+        report.encoder.exchangeId(3).timestampRecv(1_000_600);
+
+        strategy.submitExecReport(report);
+        // Clock reads: the report's publish (1,001,000), dispatch (1,002,000), the send (1,003,000), the pass's roll.
+        strategy.doWork();
+        clock.now += MinuteHistograms.MINUTE_NANOS;
+        strategy.doWork();
+
+        final MinuteSummary summary = new MinuteSummary(histograms.capacity());
+        assertEquals(true, histograms.summarize(summary));
+        final List<String> measured = new ArrayList<>();
+        for (int key = 0; key < histograms.keys(); key++) {
+            if (summary.count(key) > 0) {
+                final LatencyKey label = histograms.label(key);
+                measured.add(label.metric() + " " + label.exchange() + " " + label.kind() + " " + summary.max(key));
+            }
+        }
+        // Transit: the report's gateway receipt (1,000,600) to its arrival on the ring (1,001,000).
+        assertEquals(
+                List.of(
+                        "strat.transit KALSHI EXEC_REPORT 400",
+                        "strat.queue KALSHI EXEC_REPORT 1000",
+                        "strat.decision KALSHI EXEC_REPORT 1000"),
+                measured);
+        assertEquals("execReports", strategy.activity().name(2));
+        assertEquals(1, strategy.activity().get(2), "one execution report handled");
+        assertEquals("intents", strategy.activity().name(3));
+        assertEquals(1, strategy.activity().get(3), "one intent sent");
     }
 
     /** Reads every intent the strategy publishes; made before anything is published, so it sees them all. */

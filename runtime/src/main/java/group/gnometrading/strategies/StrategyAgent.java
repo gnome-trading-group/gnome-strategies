@@ -3,7 +3,9 @@ package group.gnometrading.strategies;
 import group.gnometrading.SecurityMaster;
 import group.gnometrading.concurrent.GnomeAgent;
 import group.gnometrading.concurrent.ThreadProfile;
+import group.gnometrading.latency.LatencyGrid;
 import group.gnometrading.md.StreamDirectory;
+import group.gnometrading.metrics.MetricCounters;
 import group.gnometrading.oms.position.PositionView;
 import group.gnometrading.schemas.Family;
 import group.gnometrading.schemas.Intent;
@@ -75,6 +77,18 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     private long triggerTimestamp;
     private long triggerOriginTimestamp;
     private long dispatchTimestamp;
+    // The trigger's exchange, for the latency grids; 0 (none) for a stream that isn't a listing's.
+    private int triggerExchangeId;
+    // Set before the agent starts, or never (a backtest): strat.queue and strat.decision.
+    private LatencyGrid queueLatency;
+    private LatencyGrid decisionLatency;
+    private LatencyGrid transitLatency;
+    // What the strategy handled and sent, counted on its thread for the session's samples.
+    private final MetricCounters activity = new MetricCounters(4);
+    private final int marketDataEvents = activity.counter("marketData");
+    private final int streamEvents = activity.counter("streamEvents");
+    private final int execReports = activity.counter("execReports");
+    private final int intentsSent = activity.counter("intents");
     // The strategy thread's own copy of exitRequest, so a pass reads the volatile once.
     private boolean exiting;
     private boolean metricsConfigured;
@@ -153,6 +167,9 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
         // Exec reports first so the strategy can react to fills before processing new market data
         work += execReportPoller.poll();
         work += marketDataPoller.poll();
+        if (queueLatency != null) {
+            queueLatency.histograms().roll(nanoClock.nanoTime());
+        }
         if (exiting && windDown != null && !windDown.isFinished()) {
             clearTrigger();
             windDown.step(exitRequest.get(), nanoClock.nanoTime());
@@ -176,6 +193,25 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
     public final void configureStreams(StreamDirectory directory) {
         this.streams = directory;
         onStreamsConfigured(directory);
+    }
+
+    /**
+     * Records how long each event took from the platform's receipt to this session's ring ({@code transit}: a shard's
+     * or gateway's clock against this host's, so it carries both clocks' error), how long it waited on the ring before
+     * handling began ({@code queue}) and how long handling took to publish each intent ({@code decision}), by the
+     * event's exchange and {@link TriggerKind}. The grids share one {@link group.gnometrading.latency.MinuteHistograms}
+     * only this agent's thread writes, and take no actions (one label). Called once before the agent starts, by the
+     * orchestrator.
+     */
+    public final void measureLatency(LatencyGrid transit, LatencyGrid queue, LatencyGrid decision) {
+        this.transitLatency = transit;
+        this.queueLatency = queue;
+        this.decisionLatency = decision;
+    }
+
+    /** What the strategy has handled and sent, counted on its thread for another to read. */
+    public final MetricCounters activity() {
+        return activity;
     }
 
     /** Called once the strategy's streams are known. Does nothing unless overridden. */
@@ -246,6 +282,8 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
                     execReportPoller.timestampNanos(),
                     execReport.decoder.timestampRecv(),
                     dispatchedAt);
+            activity.increment(execReports);
+            recordQueue(execReport.decoder.exchangeId());
             if (!exiting) {
                 onExecutionReport(execReport);
             } else if (windDown != null) {
@@ -255,18 +293,46 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
             StreamRecord record = records[templateId];
             record.wrap(buffer);
             final boolean book = record.recordType.family() == Family.BOOK;
+            countRecord(book);
             setTrigger(
                     globalSequence,
                     book ? TriggerKind.MARKET_DATA : TriggerKind.STREAM,
                     marketDataPoller.timestampNanos(),
                     record.getRecvTimestamp(),
                     dispatchedAt);
+            if (queueLatency != null) {
+                recordQueue(exchangeOf(record.streamId()));
+            }
             if (book) {
                 onMarketData(record);
             } else {
                 onStreamEvent(record.streamId(), record);
             }
         }
+    }
+
+    private void countRecord(boolean book) {
+        activity.increment(book ? marketDataEvents : streamEvents);
+    }
+
+    private void recordQueue(int exchangeId) {
+        triggerExchangeId = exchangeId;
+        if (queueLatency != null) {
+            queueLatency.record(
+                    exchangeId, 0, triggerKind.value(), dispatchTimestamp - triggerTimestamp, dispatchTimestamp);
+        }
+        if (transitLatency != null && triggerOriginTimestamp > 0) {
+            transitLatency.record(
+                    exchangeId, 0, triggerKind.value(), triggerTimestamp - triggerOriginTimestamp, dispatchTimestamp);
+        }
+    }
+
+    private int exchangeOf(int streamId) {
+        if (streams == null) {
+            return 0;
+        }
+        final Listing listing = streams.listing(streams.listingId(streamId));
+        return listing == null ? 0 : listing.exchange().exchangeId();
     }
 
     private void setTrigger(long sequence, TriggerKind kind, long arrivedAt, long originAt, long dispatchedAt) {
@@ -279,6 +345,7 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
 
     private void clearTrigger() {
         setTrigger(0, TriggerKind.OTHER, 0, 0, 0);
+        triggerExchangeId = 0;
     }
 
     /** Called when a book record (a venue listing's market data) arrives. Implement trading logic here. */
@@ -298,7 +365,8 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
      * receipt) and when handling began, so every order made for it can be traced back to what caused it.
      */
     protected final void publishIntent(Intent intent) {
-        intent.encoder.timestampSend(nanoClock.nanoTime());
+        final long now = nanoClock.nanoTime();
+        intent.encoder.timestampSend(now);
         intent.encoder.strategyId((short) strategyId);
         intent.encoder
                 .triggerSequence(triggerSequence)
@@ -307,6 +375,10 @@ public abstract class StrategyAgent implements GnomeAgent, SequencedEventHandler
                 .triggerOriginTimestamp(triggerOriginTimestamp)
                 .dispatchTimestamp(dispatchTimestamp);
         intentBuffer.publishRaw(intent.buffer, intent.templateId(), intent.totalMessageSize());
+        activity.increment(intentsSent);
+        if (decisionLatency != null && dispatchTimestamp != 0) {
+            decisionLatency.record(triggerExchangeId, 0, triggerKind.value(), now - dispatchTimestamp, now);
+        }
     }
 
     /**
