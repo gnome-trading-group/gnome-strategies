@@ -7,8 +7,9 @@ gnome-strategies holds two things with two lifecycles:
   library (no service, no stacks), released as the `gnome-strategies` artifact and pinned by gnome-orchestrator
   (sessions) and gnome-backtest.
 - `strategies/` - the production Java strategies (`EsportsPmMaker` ...). Never released. A session or backtest runs
-  them by commit, built against the orchestrator release `strategies/pom.xml` pins (`platform.orchestrator`). A
-  separate Maven project, deliberately not part of the root build.
+  them by commit, built against the orchestrator release `strategies/pom.xml` pins (`platform.orchestrator`), which
+  the registry launcher reads from the pom at the commit; a java session runs that jar alone, JVM options included.
+  A separate Maven project, deliberately not part of the root build.
 
 Most live strategies are still Python classes in gnomepy-research (`gnomepy_research.sessions.<name>.strategy:<Class>`).
 A strategy runs as a session: gnome-launcher asks the registry's `strategy-sessions/launch`, which starts an EC2
