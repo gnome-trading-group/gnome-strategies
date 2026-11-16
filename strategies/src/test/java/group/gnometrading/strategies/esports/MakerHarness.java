@@ -1,6 +1,7 @@
 package group.gnometrading.strategies.esports;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lmax.disruptor.EventFactory;
 import group.gnometrading.md.Stream;
 import group.gnometrading.md.StreamDirectory;
 import group.gnometrading.oms.position.Position;
@@ -11,6 +12,7 @@ import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderStatus;
 import group.gnometrading.schemas.OrderType;
+import group.gnometrading.schemas.SbeMessage;
 import group.gnometrading.schemas.Side;
 import group.gnometrading.schemas.book.Mbp10Encoder;
 import group.gnometrading.sequencer.GlobalSequence;
@@ -132,7 +134,7 @@ final class MakerHarness {
             positions.put(listingId, position);
         }
         GlobalSequence sequence = new GlobalSequence();
-        SequencedRingBuffer<Intent> intentBuffer = new SequencedRingBuffer<>(Intent::new, sequence);
+        SequencedRingBuffer<Intent> intentBuffer = ring(Intent::new, sequence);
         Intent decoded = new Intent();
         intents = intentBuffer.createPoller((seq, templateId, buffer, length) -> {
             if (!recording) {
@@ -154,8 +156,8 @@ final class MakerHarness {
         FakeFacts facts = new FakeFacts(minSizes);
         strategy = new EsportsPmMaker(
                 7,
-                new SequencedRingBuffer<>(Mbp10Schema::new, sequence),
-                new SequencedRingBuffer<>(OrderExecutionReport::new, sequence),
+                ring(Mbp10Schema::new, sequence),
+                ring(OrderExecutionReport::new, sequence),
                 intentBuffer,
                 positions::get,
                 null,
@@ -171,6 +173,15 @@ final class MakerHarness {
         }
         strategy.configureStreams(directory);
         strategy.configureExit(listings, (ExitResult result) -> exits.add(result.reason()));
+    }
+
+    // Rings that take turns between producers: the one-thread kind asserts its producer's thread with Object.equals on
+    // every publish, and once any test in the JVM has made a Mockito inline mock (the factory test does), that call
+    // allocates, so the allocation test would measure Mockito rather than the maker.
+    private static <T extends SbeMessage> SequencedRingBuffer<T> ring(
+            EventFactory<T> factory, GlobalSequence sequence) {
+        return new SequencedRingBuffer<>(
+                factory, sequence, SequencedRingBuffer.DEFAULT_SIZE, SequencedRingBuffer.Producers.TAKING_TURNS);
     }
 
     static Map<Integer, Double> minSizes(double polymarketIntl) {
