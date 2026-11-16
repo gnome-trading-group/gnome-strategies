@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.lmax.disruptor.EventFactory;
 import com.sun.management.ThreadMXBean;
 import group.gnometrading.md.Stream;
 import group.gnometrading.md.StreamDirectory;
@@ -11,6 +12,7 @@ import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.IntentDecoder;
 import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
+import group.gnometrading.schemas.SbeMessage;
 import group.gnometrading.sequencer.GlobalSequence;
 import group.gnometrading.sequencer.SequencedPoller;
 import group.gnometrading.sequencer.SequencedRingBuffer;
@@ -38,7 +40,11 @@ class NoopStrategyTest {
     }
 
     private final GlobalSequence sequence = new GlobalSequence();
-    private final SequencedRingBuffer<Intent> intentBuffer = new SequencedRingBuffer<>(Intent::new, sequence);
+    // Rings that take turns between producers: the one-thread kind asserts its producer's thread with Object.equals on
+    // every publish, and once any test in the JVM has made a Mockito inline mock, that call allocates, so the
+    // allocation
+    // test would measure Mockito rather than the strategy.
+    private final SequencedRingBuffer<Intent> intentBuffer = ring(Intent::new);
     private final List<Sent> sent = new ArrayList<>();
     private boolean recording = true;
     private final Intent decoded = new Intent();
@@ -56,8 +62,8 @@ class NoopStrategyTest {
     private NoopStrategy strategy(Long workMicros, Double everySeconds, Integer listings) {
         NoopStrategy strategy = new NoopStrategy(
                 7,
-                new SequencedRingBuffer<>(Mbp10Schema::new, sequence),
-                new SequencedRingBuffer<>(OrderExecutionReport::new, sequence),
+                ring(Mbp10Schema::new),
+                ring(OrderExecutionReport::new),
                 intentBuffer,
                 listingId -> null,
                 null,
@@ -75,6 +81,11 @@ class NoopStrategyTest {
         }
         strategy.configureStreams(directory);
         return strategy;
+    }
+
+    private <T extends SbeMessage> SequencedRingBuffer<T> ring(EventFactory<T> factory) {
+        return new SequencedRingBuffer<>(
+                factory, sequence, SequencedRingBuffer.DEFAULT_SIZE, SequencedRingBuffer.Producers.TAKING_TURNS);
     }
 
     private static Listing listing(int listingId) {
