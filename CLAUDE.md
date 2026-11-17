@@ -79,6 +79,11 @@ Strategy runtime (`strategies/`):
     registry reads go through `ListingFacts` so tests (and the allocation test) use an in-memory fake.
   - Metric streams `esports_arb_orders` and `game_state` keep the Python strategy's names and columns, so either can
     replay the other's sessions.
+- `load/`:
+  - `NoopStrategy` - trades nothing; for measuring what a session can carry. Reads every record, busy-spins
+    `work_micros` on each (a strategy's computation), and with `order_every_seconds` rotates a post-only bid at
+    `order_price` (default 0.01, size `order_size` 1) on and off the first `order_listings` listings to send data, so the
+    session's tick-to-order path is measured under load. Allocation-free.
 
 Tests mirror the packages under each module's `src/test/java`. `StrategyExitTest` covers the wind-down;
 `StrategyFactoryTest` the argument matching. In `strategies/`, `MakerHarness` drives the maker through its buffers on
