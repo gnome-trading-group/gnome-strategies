@@ -365,6 +365,16 @@ class EsportsPmMakerTest {
     }
 
     @Test
+    void booksSweptOnAVenueWhereTheTeamsShareOneBookDontTakeTheBidsDown() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        s.book(301, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        List<Sent> out =
+                s.book(302, new double[][] {}, new double[][] {{0.99, 500}}, START_NS + 62 * SECOND + 10, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
     void booksSweptShortOfTheGuardDontTakeTheBidsDown() {
         MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
         s.feed(BOOKS, START_NS + 61 * SECOND);

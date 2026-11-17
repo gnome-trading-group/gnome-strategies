@@ -61,8 +61,9 @@ import org.agrona.concurrent.EpochNanoClock;
  * position is completed, and the session ends once nothing is in flight and {@code ended_settle_seconds} have passed,
  * or {@code ended_max_seconds} after the end whatever it holds. A match that ends without ever having been live ends
  * the session at once, and one never live {@code never_live_hours} after its scheduled start ends it then. Bids also
- * come down for good once either team's mid is within {@code quote_guard} of a sure thing, or once a venue's books are
- * swept to it: one team offered only within {@code quote_guard} of 0 and the other bid only within it of 1.
+ * come down for good once either team's mid is within {@code quote_guard} of a sure thing, or once a venue listing each
+ * team as its own market ({@code sell_rival_venues}) has both swept to it: one team offered only within
+ * {@code quote_guard} of 0 and the other bid only within it of 1.
  *
  * <p>Bids rest only while neither price they hang on has moved more than {@code calm_move} in the last
  * {@code calm_seconds} (off unless set). Every price is put on the tick the engine enforces now, rounded toward the
@@ -183,9 +184,9 @@ public final class EsportsPmMaker extends StrategyAgent {
      * @param calm_seconds the window calm_move is measured over (5).
      * @param calm_move no bid while the hedge cost or the quoted team's best bid has ranged more than this; unset or
      *     0 quotes through every move.
-     * @param quote_guard no bid, ever again, once any team's mid is above 1 - quote_guard or below it, or a venue
-     *     shows one team only offered at or below it and the other only bid at or above 1 - quote_guard (0.02); 0
-     *     quotes to the end.
+     * @param quote_guard no bid, ever again, once any team's mid is above 1 - quote_guard or below it, or a
+     *     sell_rival_venues venue shows one team only offered at or below it and the other only bid at or above
+     *     1 - quote_guard (0.02); 0 quotes to the end.
      * @param min_edge the least locked profit per pair, after fees, a bid is priced for (0.01).
      * @param max_locked_usd the most pairs (each paying $1) held before the bids come down (2000).
      * @param completion_slippage how far above the short team's cheapest route a hedge may pay (0.05).
@@ -196,7 +197,8 @@ public final class EsportsPmMaker extends StrategyAgent {
      *     of them must reach to be bought as that order anyway (0.5); 0 leaves every such remainder unhedged.
      * @param band_from_min_size whether the hedge band starts where the hedge first reaches the quoted listing's
      *     smallest order rather than at the cheapest level (true).
-     * @param sell_rival_venues venues where a team may also be held by selling the rival's listing (kalshi).
+     * @param sell_rival_venues venues listing each team as its own market, where a team may also be held by selling
+     *     the rival's listing (kalshi).
      * @param book_depth book levels read from each update (10).
      * @param processing_time_ns the simulated decision time in a backtest (0).
      * @param league recorded, not used.
@@ -709,8 +711,10 @@ public final class EsportsPmMaker extends StrategyAgent {
                 decided = true;
             }
         }
-        for (int v = 0; v < legs.length; v += 2) {
-            if (sweptOver(legs[v], legs[v + 1]) || sweptOver(legs[v + 1], legs[v])) {
+        for (int v = 0; v < venues.length; v++) {
+            // Where the teams share one book, a single order shows on both sides at once, so their agreeing proves
+            // nothing; only a venue listing each team as its own market gives two signals.
+            if (sellRival[v] && (sweptOver(legs[v * 2], legs[v * 2 + 1]) || sweptOver(legs[v * 2 + 1], legs[v * 2]))) {
                 decided = true;
             }
         }
