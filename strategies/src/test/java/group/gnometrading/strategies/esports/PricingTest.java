@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import group.gnometrading.sm.ListingSpec;
 import org.junit.jupiter.api.Test;
 
 /** The ladder, bid and hedge maths: the Python strategy's decision and quoting tests, plus the hedging changes. */
@@ -30,6 +31,57 @@ class PricingTest {
         ladder.addVenue(own, rival, rate, sellRival);
         ladder.sort();
         return ladder;
+    }
+
+    /** Rules by leg: {lot, smallest size, smallest notional in dollars}, in contracts; null for a leg with no spec. */
+    private static OrderRules rules(double[]... legs) {
+        OrderRules rules = new OrderRules(legs.length);
+        for (int i = 0; i < legs.length; i++) {
+            double[] leg = legs[i];
+            rules.set(
+                    i,
+                    leg == null
+                            ? null
+                            : new ListingSpec(
+                                    100 + i,
+                                    10_000_000L,
+                                    Math.round(leg[0] * 1e6),
+                                    Math.round(leg[2] * 1e9),
+                                    1,
+                                    Math.round(leg[1] * 1e6)));
+        }
+        return rules;
+    }
+
+    private static final double[] WHOLE = {1, 0, 0};
+    private static final double[] CENTS = {0.01, 0, 0};
+
+    private static Completion plan(RouteLadder ladder, double wanted, boolean cross, OrderRules rules) {
+        return plan(ladder, wanted, cross, rules, 0, OrderRules.NONE);
+    }
+
+    private static Completion plan(
+            RouteLadder ladder, double wanted, boolean cross, OrderRules rules, double roundUp, long overshootLimit) {
+        Completion plan = new Completion(8, 32);
+        plan.plan(ladder, wanted, 0.05, cross, rules, roundUp, overshootLimit);
+        return plan;
+    }
+
+    private static double total(Completion plan) {
+        double total = 0;
+        for (int i = 0; i < plan.count(); i++) {
+            total += plan.contracts(i);
+        }
+        return total;
+    }
+
+    private static double on(Completion plan, int leg) {
+        for (int i = 0; i < plan.count(); i++) {
+            if (plan.leg(i) == leg) {
+                return plan.contracts(i);
+            }
+        }
+        return 0;
     }
 
     private static double fee(double rate, double price) {
@@ -129,9 +181,7 @@ class PricingTest {
                 leg(1, new double[][] {}, new double[][] {}),
                 0.07,
                 false);
-        Completion plan = new Completion(8);
-
-        plan.plan(ladder, 50, 0.05, true, new double[] {0, 0});
+        Completion plan = plan(ladder, 50, true, rules(WHOLE, WHOLE));
 
         assertEquals(1, plan.count());
         assertEquals(0, plan.leg(0));
@@ -147,9 +197,7 @@ class PricingTest {
                 leg(1, new double[][] {}, new double[][] {}),
                 0.07,
                 false);
-        Completion plan = new Completion(8);
-
-        plan.plan(ladder, 50, 0.05, false, new double[] {0, 0});
+        Completion plan = plan(ladder, 50, false, rules(WHOLE, WHOLE));
 
         assertEquals(1, plan.count());
         assertEquals(45, plan.contracts(0), EPS, "only what the book shows within the cap");
@@ -163,9 +211,7 @@ class PricingTest {
                 leg(1, new double[][] {}, new double[][] {{0.61, 18}}),
                 0.07,
                 true);
-        Completion plan = new Completion(8);
-
-        plan.plan(ladder, 18, 0.05, true, new double[] {0, 0});
+        Completion plan = plan(ladder, 18, true, rules(WHOLE, WHOLE));
 
         assertEquals(RouteLadder.SELL, plan.direction(0));
         assertEquals(1, plan.leg(0));
@@ -173,18 +219,124 @@ class PricingTest {
     }
 
     @Test
-    void ordersBelowTheListingsSmallestAreLeftOut() {
-        RouteLadder ladder = new RouteLadder(8);
-        ladder.add(0.35, 3, 0, RouteLadder.BUY, 0.35, 0.07);
-        ladder.add(0.36, 40, 1, RouteLadder.BUY, 0.36, 0.07);
-        ladder.sort();
-        Completion plan = new Completion(8);
+    void anOrderBelowItsLegsSmallestMovesToTheNextRoute() {
+        RouteLadder ladder = twoLegs(3, 40);
 
-        plan.plan(ladder, 20, 0.05, false, new double[] {5, 0});
+        Completion plan = plan(ladder, 20, false, rules(new double[] {1, 5, 0}, WHOLE));
 
         assertEquals(1, plan.count());
         assertEquals(1, plan.leg(0));
-        assertEquals(17, plan.contracts(0), EPS);
+        assertEquals(20, plan.contracts(0), EPS, "the 3 too few for leg 0 go to leg 1's visible 40");
+        assertEquals(0.36, plan.limit(0), EPS);
+    }
+
+    /** Leg 0 asks 0.35, leg 1 asks 0.36: both buys of the same team. */
+    private static RouteLadder twoLegs(double size0, double size1) {
+        RouteLadder ladder = new RouteLadder(8);
+        ladder.add(0.35, size0, 0, RouteLadder.BUY, 0.35, 0.07);
+        ladder.add(0.36, size1, 1, RouteLadder.BUY, 0.36, 0.07);
+        ladder.sort();
+        return ladder;
+    }
+
+    @Test
+    void anOddAmountIsHedgedToTheCentOnAFractionalLeg() {
+        Completion plan = plan(twoLegs(100, 100), 2.7675, true, rules(CENTS, CENTS));
+
+        assertEquals(1, plan.count());
+        assertEquals(0, plan.leg(0));
+        assertEquals(2.76, plan.contracts(0), EPS, "the 0.0075 under a lot stays");
+    }
+
+    @Test
+    void anOddAmountIsHedgedToTheContractOnWholeLegs() {
+        Completion plan = plan(twoLegs(100, 100), 2.7675, true, rules(WHOLE, WHOLE));
+
+        assertEquals(1, plan.count());
+        assertEquals(2, plan.contracts(0), EPS);
+    }
+
+    @Test
+    void theFractionAWholeLegCantTakeGoesToAFractionalOne() {
+        Completion plan = plan(twoLegs(100, 100), 2.7675, true, rules(WHOLE, CENTS));
+
+        assertEquals(2, on(plan, 0), EPS, "the cheaper whole-contract leg takes the whole contracts");
+        assertEquals(0.76, on(plan, 1), EPS, "the fraction moves to the fractional leg");
+        for (int i = 0; i < plan.count(); i++) {
+            assertEquals(0.40, plan.limit(i), EPS, "both crossing to the cap");
+        }
+    }
+
+    @Test
+    void withoutCrossingTheFractionMovesOnlyIntoWhatTheNextBookShows() {
+        Completion shown = plan(twoLegs(2.7675, 0.5), 2.7675, false, rules(WHOLE, CENTS));
+        assertEquals(2, on(shown, 0), EPS);
+        assertEquals(0.5, on(shown, 1), EPS, "only the 0.5 leg 1 shows");
+    }
+
+    @Test
+    void anOrderWorthLessThanItsLegsSmallestNotionalMovesOn() {
+        RouteLadder ladder = new RouteLadder(8);
+        ladder.add(0.10, 100, 0, RouteLadder.BUY, 0.10, 0.07);
+        ladder.add(0.11, 100, 1, RouteLadder.BUY, 0.11, 0.07);
+        ladder.sort();
+        OrderRules rules = rules(new double[] {0.01, 0, 1.0}, CENTS);
+
+        Completion plan = plan(ladder, 6, false, rules);
+
+        assertEquals(0, on(plan, 0), EPS, "6 at 0.10 is $0.60, under leg 0's $1");
+        assertEquals(6, on(plan, 1), EPS);
+        assertEquals(10_000_000, rules.smallest(0, 0.10), "10 contracts make $1 at 0.10");
+    }
+
+    @Test
+    void aLegWithNoSpecTradesWholeContracts() {
+        OrderRules rules = rules(null, null);
+
+        assertEquals(OrderRules.WHOLE, rules.smallest(0, 0.5));
+        assertEquals(2, total(plan(twoLegs(100, 100), 2.7675, true, rules)), EPS);
+    }
+
+    @Test
+    void aRemainderAtLeastHalfAContractIsBoughtAsOneWhenRoundingUp() {
+        RouteLadder ladder = twoLegs(100, 100);
+
+        assertEquals(3, total(plan(ladder, 2.7675, true, rules(WHOLE, WHOLE), 0.5, OrderRules.NONE)), EPS);
+        assertEquals(3, total(plan(ladder, 2.5, true, rules(WHOLE, WHOLE), 0.5, OrderRules.NONE)), EPS, "at it");
+        assertEquals(2, total(plan(ladder, 2.4, true, rules(WHOLE, WHOLE), 0.5, OrderRules.NONE)), EPS, "under it");
+        assertEquals(2, total(plan(ladder, 2.7675, true, rules(WHOLE, WHOLE), 0, OrderRules.NONE)), EPS, "off");
+        assertEquals(
+                0.77,
+                total(plan(ladder, 0.7675, true, rules(WHOLE, CENTS), 0.5, OrderRules.NONE)),
+                EPS,
+                "the 0.0075 left on a cent lot is three quarters of one");
+    }
+
+    @Test
+    void aRoundUpThatWouldCallForAHedgeOfTheOtherTeamIsLeftOut() {
+        RouteLadder ladder = twoLegs(100, 100);
+        long otherTeamsSmallest = 100_000L;
+
+        assertEquals(
+                2,
+                total(plan(ladder, 2.7675, true, rules(WHOLE, WHOLE), 0.5, otherTeamsSmallest)),
+                EPS,
+                "buying 0.2325 past the gap would leave the other team short more than its smallest hedge");
+        assertEquals(3, total(plan(ladder, 2.95, true, rules(WHOLE, WHOLE), 0.5, otherTeamsSmallest)), EPS);
+    }
+
+    @Test
+    void theSmallestOrderIsTheLeastAnyRouteWithinTheCapTakes() {
+        assertEquals(OrderRules.WHOLE, Completion.smallestOrder(twoLegs(100, 100), 0.05, true, rules(WHOLE, WHOLE)));
+        assertEquals(10_000, Completion.smallestOrder(twoLegs(100, 100), 0.05, true, rules(WHOLE, CENTS)));
+        RouteLadder farApart = new RouteLadder(8);
+        farApart.add(0.35, 100, 0, RouteLadder.BUY, 0.35, 0.07);
+        farApart.add(0.45, 100, 1, RouteLadder.BUY, 0.45, 0.07);
+        farApart.sort();
+        assertEquals(
+                OrderRules.WHOLE,
+                Completion.smallestOrder(farApart, 0.05, true, rules(WHOLE, CENTS)),
+                "the fractional leg is past the cap");
     }
 
     @Test

@@ -6,8 +6,10 @@ import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.IntentDecoder;
 import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
+import group.gnometrading.schemas.OrderRole;
 import group.gnometrading.schemas.OrderStatus;
 import group.gnometrading.schemas.OrderType;
+import group.gnometrading.schemas.RejectReason;
 import group.gnometrading.schemas.Side;
 import group.gnometrading.schemas.StreamRecord;
 import group.gnometrading.sequencer.SequencedRingBuffer;
@@ -44,7 +46,11 @@ import org.agrona.concurrent.EpochNanoClock;
  * same. Each hedge order is limited at the cheapest route's cost plus {@code completion_slippage}, so it crosses
  * whatever the book still has up to that cap, and one that comes back unfilled is planned again on the next update
  * of a hedge venue's book. {@code cross_completions} off limits each at the level it was costed on, and
- * {@code completion_retry_seconds} adds a wait after an unfilled one, as the Python strategy did. A hedge the venue
+ * {@code completion_retry_seconds} adds a wait after an unfilled one, as the Python strategy did. Every order is shaped
+ * to its listing's lot, smallest size and smallest notional ({@link OrderRules}), as the OMS would refuse it otherwise,
+ * so a gap is hedged once it reaches the smallest order a hedge venue takes: a contract on whole-contract venues, a
+ * cent of one where a venue trades fractions. What no venue can take waits for the next fill, or with
+ * {@code round_up_remainder} is bought as the smallest order once it is that much of one. A hedge the venue
  * rejected is never sent again unchanged. Hedging is never held back by the match state or the stake cap: an
  * unhedged position is the one risk the strategy exists not to hold.
  *
@@ -56,7 +62,9 @@ import org.agrona.concurrent.EpochNanoClock;
  * position is completed, and the session ends once nothing is in flight and {@code ended_settle_seconds} have passed,
  * or {@code ended_max_seconds} after the end whatever it holds. A match that ends without ever having been live ends
  * the session at once, and one never live {@code never_live_hours} after its scheduled start ends it then. Bids also
- * come down for good once either team's mid is within {@code quote_guard} of a sure thing.
+ * come down for good once either team's mid is within {@code quote_guard} of a sure thing, or once a venue listing each
+ * team as its own market ({@code sell_rival_venues}) has both swept to it: one team offered only within
+ * {@code quote_guard} of 0 and the other bid only within it of 1.
  *
  * <p>Bids rest only while neither price they hang on has moved more than {@code calm_move} in the last
  * {@code calm_seconds} (off unless set). Every price is put on the tick the engine enforces now, rounded toward the
@@ -93,6 +101,7 @@ public final class EsportsPmMaker extends StrategyAgent {
     private final double completionSlippage;
     private final long completionRetryNanos;
     private final boolean crossCompletions;
+    private final double roundUpRemainder;
     private final boolean bandFromMinSize;
     private final int bookDepth;
     private final long processingTimeNanos;
@@ -115,7 +124,7 @@ public final class EsportsPmMaker extends StrategyAgent {
     private final FeeSchedule[] feeSchedules;
     private final double[] takerRates;
     private final double[] makerRates;
-    private final double[] minSizes;
+    private final OrderRules rules;
 
     // Per maker leg (by team): the hedge ladder, the bid resting, the bid last rejected, and how its prices moved.
     private final RouteLadder[] hedges = {new RouteLadder(LADDER_CAPACITY), new RouteLadder(LADDER_CAPACITY)};
@@ -129,7 +138,7 @@ public final class EsportsPmMaker extends StrategyAgent {
     private final MoveWindow[] ownMoves = new MoveWindow[2];
 
     private final RouteLadder completionLadder = new RouteLadder(LADDER_CAPACITY);
-    private final Completion completion = new Completion(8);
+    private final Completion completion = new Completion(8, LADDER_CAPACITY);
     private final MakerQuote makerQuote = new MakerQuote();
     // Completions the venue rejected, as (leg, direction, contracts, limit): never sent again unchanged.
     private final int[] rejectedLeg = new int[REJECTED_CAPACITY];
@@ -142,6 +151,9 @@ public final class EsportsPmMaker extends StrategyAgent {
     private final double[] pays = new double[2];
 
     private long completionWaitUntil;
+    // The episode the hedges in flight belong to: the order counter of the quote whose fill opened the gap they close,
+    // carried on each hedge so the ledger ties them to it. 0 while the teams are even.
+    private long hedgeEpisode;
     private boolean completionWaitsForBook;
     private MatchState game = MatchState.NONE;
     private boolean wasLive;
@@ -176,17 +188,21 @@ public final class EsportsPmMaker extends StrategyAgent {
      * @param calm_seconds the window calm_move is measured over (5).
      * @param calm_move no bid while the hedge cost or the quoted team's best bid has ranged more than this; unset or
      *     0 quotes through every move.
-     * @param quote_guard no bid, ever again, once any team's mid is above 1 - quote_guard or below it (0.02); 0 quotes
-     *     to the end.
+     * @param quote_guard no bid, ever again, once any team's mid is above 1 - quote_guard or below it, or a
+     *     sell_rival_venues venue shows one team only offered at or below it and the other only bid at or above
+     *     1 - quote_guard (0.02); 0 quotes to the end.
      * @param min_edge the least locked profit per pair, after fees, a bid is priced for (0.01).
      * @param max_locked_usd the most pairs (each paying $1) held before the bids come down (2000).
      * @param completion_slippage how far above the short team's cheapest route a hedge may pay (0.05).
      * @param completion_retry_seconds the least wait after a hedge came back unfilled (0).
      * @param cross_completions whether a hedge is limited at the slippage cap rather than at the level it was costed
      *     on (true).
+     * @param round_up_remainder what fraction of the smallest order a hedge venue takes a remainder too small for any
+     *     of them must reach to be bought as that order anyway (0.5); 0 leaves every such remainder unhedged.
      * @param band_from_min_size whether the hedge band starts where the hedge first reaches the quoted listing's
      *     smallest order rather than at the cheapest level (true).
-     * @param sell_rival_venues venues where a team may also be held by selling the rival's listing (kalshi).
+     * @param sell_rival_venues venues listing each team as its own market, where a team may also be held by selling
+     *     the rival's listing (kalshi).
      * @param book_depth book levels read from each update (10).
      * @param processing_time_ns the simulated decision time in a backtest (0).
      * @param league recorded, not used.
@@ -222,6 +238,7 @@ public final class EsportsPmMaker extends StrategyAgent {
             Double completion_slippage,
             Double completion_retry_seconds,
             Boolean cross_completions,
+            Double round_up_remainder,
             Boolean band_from_min_size,
             List<String> sell_rival_venues,
             Integer book_depth,
@@ -259,6 +276,7 @@ public final class EsportsPmMaker extends StrategyAgent {
                         completion_slippage,
                         completion_retry_seconds,
                         cross_completions,
+                        round_up_remainder,
                         band_from_min_size,
                         sell_rival_venues,
                         book_depth,
@@ -301,6 +319,7 @@ public final class EsportsPmMaker extends StrategyAgent {
         this.completionSlippage = orDefault(settings.completionSlippage(), 0.05);
         this.completionRetryNanos = (long) (orDefault(settings.completionRetrySeconds(), 0.0) * SECOND);
         this.crossCompletions = orDefault(settings.crossCompletions(), Boolean.TRUE);
+        this.roundUpRemainder = fraction("round_up_remainder", orDefault(settings.roundUpRemainder(), 0.5));
         this.bandFromMinSize = orDefault(settings.bandFromMinSize(), Boolean.TRUE);
         this.bookDepth = orDefault(settings.bookDepth(), 10);
         this.processingTimeNanos = orDefault(settings.processingTimeNs(), 0L);
@@ -341,12 +360,19 @@ public final class EsportsPmMaker extends StrategyAgent {
         this.feeSchedules = new FeeSchedule[this.legs.length];
         this.takerRates = new double[this.legs.length];
         this.makerRates = new double[this.legs.length];
-        this.minSizes = new double[this.legs.length];
+        this.rules = new OrderRules(this.legs.length);
         for (Leg leg : this.legs) {
             feeTimelines[leg.index()] = facts.feeTimeline(leg.listingId);
         }
         this.unusable = unusableReason(names);
         this.watch = makeWatch(settings.polymarketSlug(), settings.kalshiEventTicker(), settings.gameStates());
+    }
+
+    private static double fraction(String name, double value) {
+        if (value < 0 || value > 1) {
+            throw new IllegalArgumentException(name + " must be within [0, 1], got " + value);
+        }
+        return value;
     }
 
     private static String orDefault(String value, String fallback) {
@@ -484,10 +510,13 @@ public final class EsportsPmMaker extends StrategyAgent {
         OrderStatus status = report.decoder.orderStatus();
         boolean terminal = isTerminal(status);
         if (leg.venue == makerVenueIndex) {
+            if (hedgeEpisode == 0 && report.decoder.filledQty() > 0) {
+                hedgeEpisode = report.getClientOidCounter();
+            }
             onQuoteReport(leg.team, status, terminal);
         } else if (terminal) {
             leg.inFlight = false;
-            noteOutcome(leg, status, report.decoder.timestampRecv());
+            noteOutcome(leg, status, report.decoder.rejectReason(), report.decoder.timestampRecv());
         }
         if (terminal || report.decoder.filledQty() > 0) {
             decide(report.decoder.timestampRecv());
@@ -512,8 +541,12 @@ public final class EsportsPmMaker extends StrategyAgent {
                 || status == OrderStatus.EXPIRED;
     }
 
-    /** A hedge that came back unfilled is planned again only once a hedge book has moved, and never resent if rejected. */
-    private void noteOutcome(Leg leg, OrderStatus status, long recvNanos) {
+    /**
+     * A hedge that came back unfilled is planned again only once a hedge book has moved, and never resent if rejected.
+     * A fractional hedge refused for its size, or for no reason the venue gave, holds that leg to whole contracts from
+     * then on: retried at each new limit, the same refusal would run up the reject streak that kills the strategy.
+     */
+    private void noteOutcome(Leg leg, OrderStatus status, RejectReason reason, long recvNanos) {
         if (leg.sentKind != COMPLETION || status == OrderStatus.FILLED) {
             return;
         }
@@ -526,7 +559,16 @@ public final class EsportsPmMaker extends StrategyAgent {
             rejectedContracts[slot] = leg.sentContracts;
             rejectedLimit[slot] = leg.sentLimit;
             rejectedCount++;
+            if (leg.sentContracts % OrderRules.WHOLE != 0 && refusesFractions(reason)) {
+                rules.holdToWholeContracts(leg.index());
+            }
         }
+    }
+
+    private static boolean refusesFractions(RejectReason reason) {
+        return reason == RejectReason.EXCHANGE_REJECTED
+                || reason == RejectReason.GATEWAY_REJECTED
+                || reason == RejectReason.INVALID_SIZE;
     }
 
     // ---- decisions --------------------------------------------------------------------------------------------
@@ -550,10 +592,15 @@ public final class EsportsPmMaker extends StrategyAgent {
     private void act(long nowNanos, int gate) {
         exposure();
         double gap = pays[0] - pays[1];
-        if (Math.abs(gap) >= 1) {
+        int shortTeam = gap > 0 ? Leg.TEAM_B : Leg.TEAM_A;
+        if (gap != 0 && Math.abs(gap) + 1e-9 >= OrderRules.contracts(trigger(shortTeam))) {
             pullQuotes();
-            complete(nowNanos, gap > 0 ? Leg.TEAM_B : Leg.TEAM_A, Math.abs(gap), gap);
-        } else if (gate == ENDING) {
+            complete(nowNanos, shortTeam, Math.abs(gap), gap, trigger(1 - shortTeam));
+            return;
+        }
+        // Even, or a remainder too small to hedge: the next fill opens a new episode.
+        hedgeEpisode = 0;
+        if (gate == ENDING) {
             if (!pullQuotes()) {
                 leaveOnceSettled(nowNanos);
             }
@@ -601,12 +648,14 @@ public final class EsportsPmMaker extends StrategyAgent {
         refreshListing(leg, nowNanos);
         double tick = tick(leg, nowNanos);
         double size = Math.min(quoteSize, maxLockedUsd);
-        double minOrder = Math.max(1.0, minSizes[leg.index()]);
+        int at = leg.index();
+        // Bids stay whole contracts: a fractional bid buys nothing a whole-contract hedge venue could cover.
+        double minOrder = OrderRules.contracts(Math.max(OrderRules.WHOLE, rules.smallest(at, Double.NaN)));
         if (!makerQuote.compute(
                 hedges[team],
                 size,
                 minEdge,
-                makerRates[leg.index()],
+                makerRates[at],
                 tick,
                 leg.bestAsk(),
                 depthBand,
@@ -614,15 +663,16 @@ public final class EsportsPmMaker extends StrategyAgent {
                 bandFromMinSize)) {
             return false;
         }
-        if (makerQuote.size() < minOrder) {
-            return false;
-        }
         double price = compliant(leg, makerQuote.price(), false, nowNanos);
         double bestAsk = leg.bestAsk();
         if (price <= 0 || (!Double.isNaN(bestAsk) && price >= bestAsk)) {
             return false;
         }
-        makerQuote.override(price, makerQuote.size());
+        long contracts = rules.floor(at, OrderRules.scaled(makerQuote.size()));
+        if (!rules.valid(at, contracts, price)) {
+            return false;
+        }
+        makerQuote.override(price, OrderRules.contracts(contracts));
         return true;
     }
 
@@ -668,31 +718,89 @@ public final class EsportsPmMaker extends StrategyAgent {
             return decided;
         }
         for (Leg leg : legs) {
-            if (leg.bad || leg.bidCount() == 0 || leg.askCount() == 0) {
-                continue;
+            if (midNearSure(leg)) {
+                decided = true;
             }
-            // The mid, not one side: a stray order on a thin book alone mustn't take the quotes down for good.
-            double mid = (leg.bidPrice(0) + leg.askPrice(0)) / 2;
-            if (mid > 1 - quoteGuard || mid < quoteGuard) {
+        }
+        for (int v = 0; v < venues.length; v++) {
+            // Where the teams share one book, a single order shows on both sides at once, so their agreeing proves
+            // nothing; only a venue listing each team as its own market gives two signals.
+            if (sellRival[v] && (sweptOver(legs[v * 2], legs[v * 2 + 1]) || sweptOver(legs[v * 2 + 1], legs[v * 2]))) {
                 decided = true;
             }
         }
         return decided;
     }
 
-    /** Buys the short team on the hedge venues: none while a retry waits or until a hedge book moves after a miss. */
-    private void complete(long nowNanos, int team, double contracts, double gap) {
+    private boolean midNearSure(Leg leg) {
+        if (leg.bad || leg.bidCount() == 0 || leg.askCount() == 0) {
+            return false;
+        }
+        // The mid, not one side: a stray order on a thin book alone mustn't take the quotes down for good.
+        double mid = (leg.bidPrice(0) + leg.askPrice(0)) / 2;
+        return mid > 1 - quoteGuard || mid < quoteGuard;
+    }
+
+    /**
+     * Whether one venue's books show the result: {@code loser} offered only at the floor with no bid left, and
+     * {@code winner} bid only at the ceiling with no offer left. Swept books have no mid, so the mid rule never sees
+     * them; the two books must agree because one book like that alone is often a single order on a thin listing.
+     */
+    private boolean sweptOver(Leg loser, Leg winner) {
+        return !loser.bad
+                && !winner.bad
+                && loser.bidCount() == 0
+                && loser.askCount() > 0
+                && loser.askPrice(0) <= quoteGuard + 1e-9
+                && winner.askCount() == 0
+                && winner.bidCount() > 0
+                && winner.bidPrice(0) >= 1 - quoteGuard - 1e-9;
+    }
+
+    /**
+     * The smallest gap in {@code team}'s favour worth hedging: the smallest order any hedge route holding the team takes
+     * now. With no route to price it, the smallest any of its hedge legs takes at all, so an unhedged position still
+     * keeps the bids down while the hedge books are out.
+     */
+    private long trigger(int team) {
+        long smallest = Completion.smallestOrder(hedges[1 - team], completionSlippage, crossCompletions, rules);
+        if (smallest != OrderRules.NONE) {
+            return smallest;
+        }
+        for (int v = 0; v < venues.length; v++) {
+            if (v != makerVenueIndex) {
+                smallest = Math.min(smallest, rules.smallest(legs[v * 2 + team].index(), Double.NaN));
+            }
+        }
+        return smallest;
+    }
+
+    /**
+     * Buys the short team on the hedge venues: none while a retry waits or until a hedge book moves after a miss. A
+     * rounded-up remainder stays under {@code otherTrigger}, so it never calls for a hedge of the other team.
+     */
+    private void complete(long nowNanos, int team, double contracts, double gap, long otherTrigger) {
         if (nowNanos < completionWaitUntil || completionWaitsForBook) {
             return;
         }
         buildHedge(completionLadder, team, nowNanos);
-        completion.plan(completionLadder, contracts, completionSlippage, crossCompletions, minSizes);
+        completion.plan(
+                completionLadder,
+                contracts,
+                completionSlippage,
+                crossCompletions,
+                rules,
+                roundUpRemainder,
+                otherTrigger);
         for (int i = 0; i < completion.count(); i++) {
             Leg leg = legs[completion.leg(i)];
             boolean buy = completion.direction(i) == RouteLadder.BUY;
             long limit = takeLimit(leg, completion.limit(i), buy, nowNanos);
-            long scaledContracts = Math.round(completion.contracts(i) * SIZE_SCALE);
-            if (limit < 0 || wasRejected(leg.index(), completion.direction(i), scaledContracts, limit)) {
+            long scaledContracts = completion.scaledContracts(i);
+            // Putting the limit on the tick can take a sale's notional under the venue's minimum.
+            if (limit < 0
+                    || !rules.valid(leg.index(), scaledContracts, limit / PRICE_SCALE)
+                    || wasRejected(leg.index(), completion.direction(i), scaledContracts, limit)) {
                 continue;
             }
             send(nowNanos, leg, completion.direction(i), scaledContracts, limit, gap);
@@ -832,7 +940,7 @@ public final class EsportsPmMaker extends StrategyAgent {
         }
     }
 
-    /** Looks up the leg's fee rates and smallest order as in force now; the clone a new schedule costs happens once. */
+    /** Looks up the leg's fee rates and order rules as in force now; the clone a new schedule costs happens once. */
     private void refreshListing(Leg leg, long nowNanos) {
         int at = leg.index();
         FeeSchedule schedule = feeTimelines[at].at(nowNanos);
@@ -849,8 +957,7 @@ public final class EsportsPmMaker extends StrategyAgent {
             takerRates[at] = components[0].taker();
             makerRates[at] = components[0].maker();
         }
-        ListingSpec spec = facts.spec(leg.listingId, nowNanos);
-        minSizes[at] = spec != null && spec.minSize() > 0 ? spec.minSize() / SIZE_SCALE : 0.0;
+        rules.set(at, facts.spec(leg.listingId, nowNanos));
     }
 
     /** The tick the engine enforces on the listing now; a cent where the registry has none. */
@@ -912,7 +1019,9 @@ public final class EsportsPmMaker extends StrategyAgent {
                 .takeSide(direction == RouteLadder.BUY ? Side.Bid : Side.Ask)
                 .takeSize(contracts)
                 .takeOrderType(OrderType.LIMIT)
-                .takeLimitPrice(limit);
+                .takeLimitPrice(limit)
+                .takeRole(OrderRole.HEDGE)
+                .episodeId(hedgeEpisode);
         publishIntent(intent);
     }
 
@@ -927,7 +1036,9 @@ public final class EsportsPmMaker extends StrategyAgent {
                 .takeSize(IntentDecoder.takeSizeNullValue())
                 .takeSide(Side.NULL_VAL)
                 .takeOrderType(OrderType.NULL_VAL)
-                .takeLimitPrice(IntentDecoder.takeLimitPriceNullValue());
+                .takeLimitPrice(IntentDecoder.takeLimitPriceNullValue())
+                .takeRole(OrderRole.NONE)
+                .episodeId(IntentDecoder.episodeIdNullValue());
         intent.encoder.flags().clear();
     }
 

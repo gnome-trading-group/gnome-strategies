@@ -8,10 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import group.gnometrading.schemas.OrderRole;
 import group.gnometrading.schemas.OrderStatus;
 import group.gnometrading.schemas.OrderType;
+import group.gnometrading.schemas.RejectReason;
 import group.gnometrading.schemas.Side;
 import group.gnometrading.strategies.esports.MakerHarness.Sent;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +37,38 @@ class EsportsPmMakerTest {
             args.put((String) keyValues[i], keyValues[i + 1]);
         }
         return new MakerHarness(args);
+    }
+
+    /** A session on the given venues' legs ({@link MakerHarness#LEGS} indexes) and specs. */
+    private static MakerHarness on(int[] venues, Map<Integer, double[]> specs, Object... keyValues) {
+        Map<String, Object> args = new HashMap<>();
+        for (int i = 0; i < keyValues.length; i += 2) {
+            args.put((String) keyValues[i], keyValues[i + 1]);
+        }
+        List<Map<String, Object>> legs = new ArrayList<>();
+        for (int venue : venues) {
+            legs.add(MakerHarness.LEGS.get(venue));
+        }
+        args.put("legs", legs);
+        return new MakerHarness(args, specs);
+    }
+
+    private static final int[] PM_US_ONLY = {0, 2};
+    private static final int[] KALSHI_ONLY = {0, 1};
+    private static final int[] ALL_THREE = {0, 1, 2};
+
+    /** Fills {@code contracts} of the team A bid and returns the hedges sent. */
+    private static List<Sent> fillTeamA(MakerHarness s, Object[][] books, double contracts) {
+        s.feed(books, 0);
+        s.hold(101, contracts);
+        return takes(s.report(101, OrderStatus.PARTIALLY_FILLED, contracts, 0));
+    }
+
+    private static double hedged(List<Sent> hedges, long securityId) {
+        return hedges.stream()
+                .filter(x -> x.securityId() == securityId)
+                .mapToDouble(Sent::takeContracts)
+                .sum();
     }
 
     private static MakerHarness session(Object... keyValues) {
@@ -93,6 +128,21 @@ class EsportsPmMakerTest {
         assertEquals(OrderType.LIMIT, hedge.get(0).takeOrderType());
         assertEquals(20, hedge.get(0).takeContracts(), EPS);
         assertEquals(0.53, hedge.get(0).limit(), EPS, "0.48 best ask plus 0.05 completion_slippage");
+    }
+
+    @Test
+    void aHedgeIsTaggedWithTheFillThatOpenedItsGap() {
+        MakerHarness s = maker();
+        s.feed(BOOKS, 0);
+        s.hold(101, 20);
+
+        Sent hedge = takes(s.reportOrder(101, 31L, OrderStatus.PARTIALLY_FILLED, 20, 0))
+                .get(0);
+
+        assertEquals(OrderRole.HEDGE, hedge.takeRole());
+        assertEquals(31L, hedge.episodeId());
+        List<Sent> bids = s.feed(BOOKS, 1).stream().filter(Sent::isBid).toList();
+        assertTrue(bids.stream().allMatch(b -> b.takeRole() == OrderRole.NONE && b.episodeId() == 0));
     }
 
     @Test
@@ -194,6 +244,90 @@ class EsportsPmMakerTest {
         assertEquals(0.55, hedge.limit(), EPS, "down to 1 - (0.40 + 0.05)");
     }
 
+    // ---- lots, minimums and remainders ---------------------------------------------------------------------------
+
+    @Test
+    void anOddFillIsHedgedToTheCentWherePolymarketUsIsTheHedge() {
+        List<Sent> hedges = fillTeamA(on(PM_US_ONLY, MakerHarness.venueSpecs(1)), BOOKS, 2.7675);
+
+        assertEquals(1, hedges.size());
+        assertEquals(2.77, hedged(hedges, 1302L), EPS, "2.76, and the 0.0075 left is most of a cent");
+    }
+
+    @Test
+    void withoutRoundingUpAFractionalHedgeLeavesOnlyWhatIsUnderALot() {
+        List<Sent> hedges =
+                fillTeamA(on(PM_US_ONLY, MakerHarness.venueSpecs(1), "round_up_remainder", 0.0), BOOKS, 2.7675);
+
+        assertEquals(2.76, hedged(hedges, 1302L), EPS);
+    }
+
+    @Test
+    void anOddFillOnWholeContractKalshiIsRoundedUpToTheNextContract() {
+        List<Sent> hedges = fillTeamA(on(KALSHI_ONLY, MakerHarness.venueSpecs(1)), BOOKS, 2.7675);
+
+        assertEquals(1, hedges.size());
+        assertEquals(3, hedged(hedges, 1202L), EPS, "2, plus the 0.7675 left as a third contract");
+    }
+
+    @Test
+    void withoutRoundingUpWholeContractKalshiHedgesTheWholeContractsAsToday() {
+        List<Sent> hedges =
+                fillTeamA(on(KALSHI_ONLY, MakerHarness.venueSpecs(1), "round_up_remainder", 0.0), BOOKS, 2.7675);
+
+        assertEquals(2, hedged(hedges, 1202L), EPS);
+    }
+
+    @Test
+    void anOddFillOnFractionalKalshiIsHedgedToTheCent() {
+        List<Sent> hedges = fillTeamA(on(KALSHI_ONLY, MakerHarness.venueSpecs(0.01)), BOOKS, 2.7675);
+
+        assertEquals(2.77, hedged(hedges, 1202L), EPS);
+    }
+
+    @Test
+    void onThreeVenuesWholeKalshiTakesTheContractsAndPolymarketUsTheFraction() {
+        Object[][] books = with(BOOKS, 202, new double[][] {{0.45, 100}}, new double[][] {{0.42, 100}});
+
+        List<Sent> hedges = fillTeamA(on(ALL_THREE, MakerHarness.venueSpecs(1)), books, 2.7675);
+
+        assertEquals(2, hedged(hedges, 1202L), EPS, "Kalshi is cheapest, in whole contracts");
+        assertEquals(0.77, hedged(hedges, 1302L), EPS, "the fraction goes to Polymarket US, to the cent");
+    }
+
+    @Test
+    void aGapUnderAContractIsHedgedOnlyWhereAVenueTradesFractions() {
+        assertEquals(0.3, hedged(fillTeamA(on(ALL_THREE, MakerHarness.venueSpecs(1)), BOOKS, 0.3), 1302L), EPS);
+        assertEquals(List.of(), fillTeamA(maker(), BOOKS, 0.3), "whole-contract hedge venues can't take 0.3");
+    }
+
+    @Test
+    void aBidWorthLessThanTheVenuesSmallestNotionalIsNotSent() {
+        Map<Integer, double[]> specs = MakerHarness.venueSpecs(1);
+        specs.put(101, new double[] {0.01, 5, 4.5});
+        specs.put(102, new double[] {0.01, 5, 4.5});
+        MakerHarness s = on(ALL_THREE, specs, "quote_size", 10.0);
+
+        Map<Long, double[]> q = quotes(s.feed(BOOKS, 0));
+
+        assertEquals(0.49, q.get(1101L)[0], EPS);
+        assertEquals(10, q.get(1101L)[1], EPS, "10 at 0.49 is $4.90");
+        assertFalse(q.containsKey(1102L), "10 at 0.41 is $4.10, under $4.50");
+    }
+
+    @Test
+    void aFractionalHedgeTheVenueRefusesIsNeverSentFractionalAgain() {
+        MakerHarness s = on(KALSHI_ONLY, MakerHarness.venueSpecs(0.01), "round_up_remainder", 0.0);
+        assertEquals(2.76, hedged(fillTeamA(s, BOOKS, 2.7675), 1202L), EPS);
+
+        s.report(202, OrderStatus.REJECTED, 0, 0, RejectReason.EXCHANGE_REJECTED);
+        List<Sent> again =
+                takes(s.book(202, new double[][] {{0.49, 100}}, new double[][] {{0.42, 100}}, SECOND, false));
+
+        assertEquals(1, again.size());
+        assertEquals(2, again.get(0).takeContracts(), EPS, "Kalshi now takes whole contracts only");
+    }
+
     // ---- play gate ----------------------------------------------------------------------------------------------
 
     @Test
@@ -221,6 +355,58 @@ class EsportsPmMakerTest {
         MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
         s.feed(BOOKS, START_NS + 61 * SECOND);
         List<Sent> out = s.book(201, new double[][] {{0.99, 1}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
+    void theMakerPullsItsBidsForGoodWhenAVenueIsSweptToTheResult() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        assertTrue(quotes(s.feed(BOOKS, START_NS + 61 * SECOND)).containsKey(1101L));
+        s.book(201, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+
+        List<Sent> pulled =
+                s.book(202, new double[][] {}, new double[][] {{0.99, 500}}, START_NS + 62 * SECOND + 10, false);
+
+        assertFalse(pulled.isEmpty());
+        assertTrue(pulled.stream().allMatch(Sent::isPull));
+        assertEquals(Map.of(), quotes(s.feed(BOOKS, START_NS + 63 * SECOND)));
+    }
+
+    @Test
+    void oneSweptBookAloneDoesntTakeTheBidsDown() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        List<Sent> out = s.book(201, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
+    void booksSweptOnAVenueWhereTheTeamsShareOneBookDontTakeTheBidsDown() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        s.book(301, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        List<Sent> out =
+                s.book(302, new double[][] {}, new double[][] {{0.99, 500}}, START_NS + 62 * SECOND + 10, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
+    void booksSweptShortOfTheGuardDontTakeTheBidsDown() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        s.book(201, new double[][] {{0.05, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        List<Sent> out =
+                s.book(202, new double[][] {}, new double[][] {{0.95, 500}}, START_NS + 62 * SECOND + 10, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
+    void sweptBooksOnTwoVenuesDontAddUpToAResult() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        s.book(201, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        List<Sent> out =
+                s.book(302, new double[][] {}, new double[][] {{0.99, 500}}, START_NS + 62 * SECOND + 10, false);
         assertTrue(out.stream().noneMatch(Sent::isPull));
     }
 
