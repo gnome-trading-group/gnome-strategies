@@ -61,7 +61,8 @@ import org.agrona.concurrent.EpochNanoClock;
  * position is completed, and the session ends once nothing is in flight and {@code ended_settle_seconds} have passed,
  * or {@code ended_max_seconds} after the end whatever it holds. A match that ends without ever having been live ends
  * the session at once, and one never live {@code never_live_hours} after its scheduled start ends it then. Bids also
- * come down for good once either team's mid is within {@code quote_guard} of a sure thing.
+ * come down for good once either team's mid is within {@code quote_guard} of a sure thing, or once a venue's books are
+ * swept to it: one team offered only within {@code quote_guard} of 0 and the other bid only within it of 1.
  *
  * <p>Bids rest only while neither price they hang on has moved more than {@code calm_move} in the last
  * {@code calm_seconds} (off unless set). Every price is put on the tick the engine enforces now, rounded toward the
@@ -182,8 +183,9 @@ public final class EsportsPmMaker extends StrategyAgent {
      * @param calm_seconds the window calm_move is measured over (5).
      * @param calm_move no bid while the hedge cost or the quoted team's best bid has ranged more than this; unset or
      *     0 quotes through every move.
-     * @param quote_guard no bid, ever again, once any team's mid is above 1 - quote_guard or below it (0.02); 0 quotes
-     *     to the end.
+     * @param quote_guard no bid, ever again, once any team's mid is above 1 - quote_guard or below it, or a venue
+     *     shows one team only offered at or below it and the other only bid at or above 1 - quote_guard (0.02); 0
+     *     quotes to the end.
      * @param min_edge the least locked profit per pair, after fees, a bid is priced for (0.01).
      * @param max_locked_usd the most pairs (each paying $1) held before the bids come down (2000).
      * @param completion_slippage how far above the short team's cheapest route a hedge may pay (0.05).
@@ -703,16 +705,41 @@ public final class EsportsPmMaker extends StrategyAgent {
             return decided;
         }
         for (Leg leg : legs) {
-            if (leg.bad || leg.bidCount() == 0 || leg.askCount() == 0) {
-                continue;
+            if (midNearSure(leg)) {
+                decided = true;
             }
-            // The mid, not one side: a stray order on a thin book alone mustn't take the quotes down for good.
-            double mid = (leg.bidPrice(0) + leg.askPrice(0)) / 2;
-            if (mid > 1 - quoteGuard || mid < quoteGuard) {
+        }
+        for (int v = 0; v < legs.length; v += 2) {
+            if (sweptOver(legs[v], legs[v + 1]) || sweptOver(legs[v + 1], legs[v])) {
                 decided = true;
             }
         }
         return decided;
+    }
+
+    private boolean midNearSure(Leg leg) {
+        if (leg.bad || leg.bidCount() == 0 || leg.askCount() == 0) {
+            return false;
+        }
+        // The mid, not one side: a stray order on a thin book alone mustn't take the quotes down for good.
+        double mid = (leg.bidPrice(0) + leg.askPrice(0)) / 2;
+        return mid > 1 - quoteGuard || mid < quoteGuard;
+    }
+
+    /**
+     * Whether one venue's books show the result: {@code loser} offered only at the floor with no bid left, and
+     * {@code winner} bid only at the ceiling with no offer left. Swept books have no mid, so the mid rule never sees
+     * them; the two books must agree because one book like that alone is often a single order on a thin listing.
+     */
+    private boolean sweptOver(Leg loser, Leg winner) {
+        return !loser.bad
+                && !winner.bad
+                && loser.bidCount() == 0
+                && loser.askCount() > 0
+                && loser.askPrice(0) <= quoteGuard + 1e-9
+                && winner.askCount() == 0
+                && winner.bidCount() > 0
+                && winner.bidPrice(0) >= 1 - quoteGuard - 1e-9;
     }
 
     /**

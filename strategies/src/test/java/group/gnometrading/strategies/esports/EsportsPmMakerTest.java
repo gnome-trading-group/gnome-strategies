@@ -343,6 +343,48 @@ class EsportsPmMakerTest {
     }
 
     @Test
+    void theMakerPullsItsBidsForGoodWhenAVenueIsSweptToTheResult() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        assertTrue(quotes(s.feed(BOOKS, START_NS + 61 * SECOND)).containsKey(1101L));
+        s.book(201, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+
+        List<Sent> pulled =
+                s.book(202, new double[][] {}, new double[][] {{0.99, 500}}, START_NS + 62 * SECOND + 10, false);
+
+        assertFalse(pulled.isEmpty());
+        assertTrue(pulled.stream().allMatch(Sent::isPull));
+        assertEquals(Map.of(), quotes(s.feed(BOOKS, START_NS + 63 * SECOND)));
+    }
+
+    @Test
+    void oneSweptBookAloneDoesntTakeTheBidsDown() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        List<Sent> out = s.book(201, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
+    void booksSweptShortOfTheGuardDontTakeTheBidsDown() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        s.book(201, new double[][] {{0.05, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        List<Sent> out =
+                s.book(202, new double[][] {}, new double[][] {{0.95, 500}}, START_NS + 62 * SECOND + 10, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
+    void sweptBooksOnTwoVenuesDontAddUpToAResult() {
+        MakerHarness s = session("game_states", List.of(LIVE), "scheduled_start", START);
+        s.feed(BOOKS, START_NS + 61 * SECOND);
+        s.book(201, new double[][] {{0.01, 500}}, new double[][] {}, START_NS + 62 * SECOND, false);
+        List<Sent> out =
+                s.book(302, new double[][] {}, new double[][] {{0.99, 500}}, START_NS + 62 * SECOND + 10, false);
+        assertTrue(out.stream().noneMatch(Sent::isPull));
+    }
+
+    @Test
     void theMakerPullsItsBidsAtTheEndThenLeavesOnceFillsHaveHadTime() {
         MakerHarness s = session("game_states", List.of(NOT_STARTED, LIVE, ENDED), "scheduled_start", START);
         s.feed(BOOKS, ENDED_NS - SECOND);
