@@ -12,6 +12,7 @@ import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
 import group.gnometrading.schemas.OrderStatus;
 import group.gnometrading.schemas.OrderType;
+import group.gnometrading.schemas.RejectReason;
 import group.gnometrading.schemas.SbeMessage;
 import group.gnometrading.schemas.Side;
 import group.gnometrading.schemas.book.Mbp10Encoder;
@@ -121,10 +122,11 @@ final class MakerHarness {
     private final OrderExecutionReport report = new OrderExecutionReport();
 
     MakerHarness(Map<String, Object> args) {
-        this(args, minSizes(5.0));
+        this(args, specs(5.0));
     }
 
-    MakerHarness(Map<String, Object> args, Map<Integer, Double> minSizes) {
+    /** {@code specs} by listing: {lot, smallest size, smallest notional in dollars}; a lot of 0 is none given. */
+    MakerHarness(Map<String, Object> args, Map<Integer, double[]> specs) {
         Map<String, Object> all = new HashMap<>(args);
         all.putIfAbsent("legs", LEGS);
         Settings settings = MAPPER.convertValue(all, Settings.class);
@@ -153,7 +155,7 @@ final class MakerHarness {
                     d.takeOrderType(),
                     d.takeLimitPrice()));
         });
-        FakeFacts facts = new FakeFacts(minSizes);
+        FakeFacts facts = new FakeFacts(specs);
         strategy = new EsportsPmMaker(
                 7,
                 ring(Mbp10Schema::new, sequence),
@@ -184,8 +186,24 @@ final class MakerHarness {
                 factory, sequence, SequencedRingBuffer.DEFAULT_SIZE, SequencedRingBuffer.Producers.TAKING_TURNS);
     }
 
-    static Map<Integer, Double> minSizes(double polymarketIntl) {
-        return Map.of(101, polymarketIntl, 102, polymarketIntl);
+    /** No lots given anywhere, and Polymarket International's smallest order. */
+    static Map<Integer, double[]> specs(double polymarketIntlMinSize) {
+        Map<Integer, double[]> specs = new HashMap<>();
+        specs.put(101, new double[] {0, polymarketIntlMinSize, 0});
+        specs.put(102, new double[] {0, polymarketIntlMinSize, 0});
+        return specs;
+    }
+
+    /** The venues' specs as the registry has them for CS2: cent lots, five shares on Polymarket International. */
+    static Map<Integer, double[]> venueSpecs(double kalshiLot) {
+        Map<Integer, double[]> specs = specs(5.0);
+        specs.put(101, new double[] {0.01, 5, 0});
+        specs.put(102, new double[] {0.01, 5, 0});
+        specs.put(201, new double[] {kalshiLot, 0, 0});
+        specs.put(202, new double[] {kalshiLot, 0, 0});
+        specs.put(301, new double[] {0.01, 0, 0});
+        specs.put(302, new double[] {0.01, 0, 0});
+        return specs;
     }
 
     static int exchangeOf(int listingId) {
@@ -211,7 +229,11 @@ final class MakerHarness {
     }
 
     List<Sent> report(int listingId, OrderStatus status, double filled, long t) {
-        submitReport(listingId, status, filled, t);
+        return report(listingId, status, filled, t, RejectReason.NULL_VAL);
+    }
+
+    List<Sent> report(int listingId, OrderStatus status, double filled, long t, RejectReason reason) {
+        submitReport(listingId, status, filled, t, reason);
         return pass();
     }
 
@@ -239,7 +261,12 @@ final class MakerHarness {
     }
 
     void submitReport(int listingId, OrderStatus status, double filled, long t) {
+        submitReport(listingId, status, filled, t, RejectReason.NULL_VAL);
+    }
+
+    void submitReport(int listingId, OrderStatus status, double filled, long t, RejectReason reason) {
         report.encoder
+                .rejectReason(reason)
                 .exchangeId(exchangeOf(listingId))
                 .securityId(securityOf(listingId))
                 .orderStatus(status)
@@ -349,13 +376,13 @@ final class MakerHarness {
         return new Stream(10_000 + listingId, 1, "SRC", "LISTING", listingId, null, "BOOK", null, 0, 0, 0, true);
     }
 
-    /** The registry's facts on the fixture listings: a one-cent tick, the venues' fee curves, and minimum orders. */
+    /** The registry's facts on the fixture listings: a one-cent tick, the venues' fee curves, and order rules. */
     static final class FakeFacts implements ListingFacts {
         private final Int2ObjectHashMap<Listing> listings = new Int2ObjectHashMap<>();
         private final Int2ObjectHashMap<FeeTimeline> fees = new Int2ObjectHashMap<>();
         private final Int2ObjectHashMap<ListingSpec> specs = new Int2ObjectHashMap<>();
 
-        FakeFacts(Map<Integer, Double> minSizes) {
+        FakeFacts(Map<Integer, double[]> given) {
             for (int listingId : LISTINGS) {
                 int exchangeId = exchangeOf(listingId);
                 listings.put(
@@ -382,8 +409,16 @@ final class MakerHarness {
                                 "SEC"));
                 double taker = exchangeId == PMI ? 0.05 : exchangeId == KALSHI ? 0.07 : 0.0695;
                 fees.put(listingId, timeline(taker, 0.0));
-                long minSize = Math.round(minSizes.getOrDefault(listingId, 0.0) * SIZE);
-                specs.put(listingId, new ListingSpec(listingId, 10_000_000L, 0, 0, 1, minSize));
+                double[] spec = given.getOrDefault(listingId, new double[] {0, 0, 0});
+                specs.put(
+                        listingId,
+                        new ListingSpec(
+                                listingId,
+                                10_000_000L,
+                                Math.round(spec[0] * SIZE),
+                                Math.round(spec[2] * PRICE),
+                                1,
+                                Math.round(spec[1] * SIZE)));
             }
         }
 

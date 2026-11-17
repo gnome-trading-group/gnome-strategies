@@ -23,6 +23,7 @@ record Settings(
         @JsonProperty("completion_slippage") Double completionSlippage,
         @JsonProperty("completion_retry_seconds") Double completionRetrySeconds,
         @JsonProperty("cross_completions") Boolean crossCompletions,
+        @JsonProperty("round_up_remainder") Double roundUpRemainder,
         @JsonProperty("band_from_min_size") Boolean bandFromMinSize,
         @JsonProperty("sell_rival_venues") List<String> sellRivalVenues,
         @JsonProperty("book_depth") Integer bookDepth,

@@ -17,7 +17,7 @@ class EsportsPmMakerFactoryTest {
 
     @Test
     void theLaunchersArgumentsBuildTheMakerWithTheRestDefaulted() {
-        MakerHarness.FakeFacts facts = new MakerHarness.FakeFacts(MakerHarness.minSizes(5));
+        MakerHarness.FakeFacts facts = new MakerHarness.FakeFacts(MakerHarness.specs(5));
         SecurityMaster securityMaster = mock(SecurityMaster.class);
         when(securityMaster.getListing(anyInt())).thenAnswer(call -> facts.listing(call.getArgument(0)));
         when(securityMaster.getFeeTimeline(anyInt())).thenAnswer(call -> facts.feeTimeline(call.getArgument(0)));

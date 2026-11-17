@@ -22,6 +22,8 @@ class EsportsPmMakerAllocationTest {
     private static final double[][] PMI_A_ASKS = {{0.60, 100}};
     private static final double[][] PMI_A_BIDS = {{0.40, 100}};
 
+    private static final double ODD_FILL = 20.4567;
+
     private static long allocatedOnThisThread() {
         return ((ThreadMXBean) ManagementFactory.getThreadMXBean())
                 .getThreadAllocatedBytes(Thread.currentThread().getId());
@@ -36,11 +38,12 @@ class EsportsPmMakerAllocationTest {
             s.submitBook(101, PMI_A_ASKS, PMI_A_BIDS, t, false);
             s.step();
             if (i % 50 == 0) {
-                s.hold(101, 20);
-                s.submitReport(101, OrderStatus.PARTIALLY_FILLED, 20, t);
+                // An odd fill against cent and whole-contract lots runs the rounding, moving and rounding up.
+                s.hold(101, ODD_FILL);
+                s.submitReport(101, OrderStatus.PARTIALLY_FILLED, ODD_FILL, t);
                 s.step();
-                s.hold(302, 20);
-                s.submitReport(302, OrderStatus.FILLED, 20, t);
+                s.hold(302, ODD_FILL);
+                s.submitReport(302, OrderStatus.FILLED, ODD_FILL, t);
                 s.step();
                 s.hold(101, 0);
                 s.hold(302, 0);
@@ -52,7 +55,7 @@ class EsportsPmMakerAllocationTest {
 
     @Test
     void quotingAndHedgingAllocateNothing() {
-        MakerHarness s = new MakerHarness(Map.of());
+        MakerHarness s = new MakerHarness(Map.of(), MakerHarness.venueSpecs(1));
         s.feed(MakerHarness.BOOKS, 0);
         assertTrue(MakerHarness.quotes(s.feed(MakerHarness.BOOKS, 0)).isEmpty(), "quoting before the measurement");
         s.recording = false;
