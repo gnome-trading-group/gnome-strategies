@@ -6,6 +6,7 @@ import group.gnometrading.schemas.ExecType;
 import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.IntentDecoder;
 import group.gnometrading.schemas.OrderExecutionReport;
+import group.gnometrading.schemas.OrderRole;
 import group.gnometrading.schemas.OrderType;
 import group.gnometrading.schemas.RejectReason;
 import group.gnometrading.schemas.Side;
@@ -172,13 +173,19 @@ final class WindDown {
                 .askSize(IntentDecoder.askSizeNullValue())
                 .takeLimitPrice(IntentDecoder.takeLimitPriceNullValue());
         intent.encoder.flags().clear();
+        intent.encoder.episodeId(IntentDecoder.episodeIdNullValue());
         if (takeSide == null) {
             intent.encoder
                     .takeSize(IntentDecoder.takeSizeNullValue())
                     .takeSide(Side.NULL_VAL)
-                    .takeOrderType(OrderType.NULL_VAL);
+                    .takeOrderType(OrderType.NULL_VAL)
+                    .takeRole(OrderRole.NONE);
         } else {
-            intent.encoder.takeSize(takeSize).takeSide(takeSide).takeOrderType(OrderType.MARKET);
+            intent.encoder
+                    .takeSize(takeSize)
+                    .takeSide(takeSide)
+                    .takeOrderType(OrderType.MARKET)
+                    .takeRole(OrderRole.EXIT);
         }
     }
 

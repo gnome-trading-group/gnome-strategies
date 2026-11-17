@@ -10,6 +10,7 @@ import group.gnometrading.schemas.Intent;
 import group.gnometrading.schemas.IntentDecoder;
 import group.gnometrading.schemas.Mbp10Schema;
 import group.gnometrading.schemas.OrderExecutionReport;
+import group.gnometrading.schemas.OrderRole;
 import group.gnometrading.schemas.OrderType;
 import group.gnometrading.schemas.RejectReason;
 import group.gnometrading.schemas.Side;
@@ -75,6 +76,7 @@ class StrategyExitTest {
     private final long[] clock = {100 * SECOND};
     private final Map<Integer, Position> positions = new HashMap<>();
     private final List<Sent> sent = new ArrayList<>();
+    private final List<OrderRole> roles = new ArrayList<>();
     private final List<ExitResult> results = new ArrayList<>();
     private SequencedPoller intentPoller;
     private TestStrategy strategy;
@@ -86,6 +88,7 @@ class StrategyExitTest {
         intentPoller = intents.createPoller((seq, templateId, buffer, length) -> {
             decoded.wrap(buffer);
             IntentDecoder d = decoded.decoder;
+            roles.add(d.takeRole());
             sent.add(new Sent(
                     d.exchangeId(),
                     d.securityId(),
@@ -158,6 +161,7 @@ class StrategyExitTest {
                         Side.Ask,
                         OrderType.MARKET),
                 close);
+        assertEquals(List.of(OrderRole.NONE, OrderRole.NONE, OrderRole.EXIT), roles, "a flatten says it is an exit");
 
         positions.get(1).netQuantity = 0;
         pass();
