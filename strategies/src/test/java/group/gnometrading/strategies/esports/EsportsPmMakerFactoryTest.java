@@ -34,6 +34,8 @@ class EsportsPmMakerFactoryTest {
                 "2026-11-12T16:45:00+00:00",
                 "max_locked_usd",
                 5000,
+                "venue_hedge_cost",
+                Map.of("kalshi", 0.01),
                 "game_states",
                 List.of());
 

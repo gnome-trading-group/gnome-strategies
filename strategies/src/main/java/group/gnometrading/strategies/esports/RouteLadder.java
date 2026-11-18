@@ -6,8 +6,9 @@ package group.gnometrading.strategies.esports;
  * the rival team's listing at its bids: a sale at b pays when the rival loses, so it costs 1 - b per contract.
  *
  * <p>An entry's all-in cost adds the venue's taker fee curve, {@code rate * c * (1 - c)}, which is the same for a sale
- * at b as for a buy at 1 - b; the venues' fee rounding is left out. Prices are plain probabilities in [0, 1] and sizes
- * contracts. Filled in place and sorted without allocating, so it can be rebuilt on every book update.
+ * at b as for a buy at 1 - b, plus any extra cost the venue is charged for what its fee doesn't show; the venues' fee
+ * rounding is left out. Prices are plain probabilities in [0, 1] and sizes contracts. Filled in place and sorted
+ * without allocating, so it can be rebuilt on every book update.
  */
 final class RouteLadder {
 
@@ -71,27 +72,41 @@ final class RouteLadder {
     }
 
     /** Adds the routes through one venue: the own listing's asks, and if allowed the rival listing's bids. */
-    void addVenue(Leg own, Leg rival, double feeRate, boolean sellRival) {
+    void addVenue(Leg own, Leg rival, double feeRate, double extraCost, boolean sellRival) {
         for (int i = 0; i < own.askCount(); i++) {
             if (own.askSize(i) > 0) {
-                add(own.askPrice(i), own.askSize(i), own.index(), BUY, own.askPrice(i), feeRate);
+                add(own.askPrice(i), own.askSize(i), own.index(), BUY, own.askPrice(i), feeRate, extraCost);
             }
         }
         if (sellRival) {
             for (int i = 0; i < rival.bidCount(); i++) {
                 if (rival.bidSize(i) > 0) {
-                    add(1 - rival.bidPrice(i), rival.bidSize(i), rival.index(), SELL, rival.bidPrice(i), feeRate);
+                    add(
+                            1 - rival.bidPrice(i),
+                            rival.bidSize(i),
+                            rival.index(),
+                            SELL,
+                            rival.bidPrice(i),
+                            feeRate,
+                            extraCost);
                 }
             }
         }
     }
 
-    void add(double routeCost, double routeSize, int legIndex, int routeDirection, double price, double feeRate) {
+    void add(
+            double routeCost,
+            double routeSize,
+            int legIndex,
+            int routeDirection,
+            double price,
+            double feeRate,
+            double extraCost) {
         if (count == cost.length) {
             return;
         }
         cost[count] = routeCost;
-        allIn[count] = routeCost + feeRate * routeCost * (1 - routeCost);
+        allIn[count] = routeCost + feeRate * routeCost * (1 - routeCost) + extraCost;
         size[count] = routeSize;
         leg[count] = legIndex;
         direction[count] = routeDirection;

@@ -28,6 +28,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.agrona.collections.Int2ObjectHashMap;
 import org.agrona.concurrent.EpochNanoClock;
 
@@ -114,6 +115,7 @@ public final class EsportsPmMaker extends StrategyAgent {
     private final Leg[] legs;
     private final String[] venues;
     private final boolean[] sellRival;
+    private final double[] extraHedgeCost;
     private final int makerVenueIndex;
     private final Int2ObjectHashMap<Leg> legByListing = new Int2ObjectHashMap<>();
     private GameWatch watch;
@@ -203,6 +205,9 @@ public final class EsportsPmMaker extends StrategyAgent {
      *     smallest order rather than at the cheapest level (true).
      * @param sell_rival_venues venues listing each team as its own market, where a team may also be held by selling
      *     the rival's listing (kalshi).
+     * @param venue_hedge_cost an extra cost per contract charged to every hedge route on a venue, by venue name (none):
+     *     a hedge can cost more than its fee shows when its venue's price tends to move before the order lands, and
+     *     this charges it for that when choosing a route and pricing a bid. Venues the legs don't name are ignored.
      * @param book_depth book levels read from each update (10).
      * @param processing_time_ns the simulated decision time in a backtest (0).
      * @param league recorded, not used.
@@ -241,6 +246,7 @@ public final class EsportsPmMaker extends StrategyAgent {
             Double round_up_remainder,
             Boolean band_from_min_size,
             List<String> sell_rival_venues,
+            Map<String, Double> venue_hedge_cost,
             Integer book_depth,
             Long processing_time_ns,
             String league,
@@ -279,6 +285,7 @@ public final class EsportsPmMaker extends StrategyAgent {
                         round_up_remainder,
                         band_from_min_size,
                         sell_rival_venues,
+                        venue_hedge_cost,
                         book_depth,
                         processing_time_ns,
                         league,
@@ -346,6 +353,7 @@ public final class EsportsPmMaker extends StrategyAgent {
         List<String> sellRivalVenues =
                 settings.sellRivalVenues() == null ? List.of("kalshi") : settings.sellRivalVenues();
         this.sellRival = new boolean[venues.length];
+        this.extraHedgeCost = extraHedgeCosts(venues, settings.venueHedgeCost());
         this.legs = new Leg[venues.length * 2];
         for (int v = 0; v < venues.length; v++) {
             sellRival[v] = sellRivalVenues.contains(venues[v]);
@@ -366,6 +374,23 @@ public final class EsportsPmMaker extends StrategyAgent {
         }
         this.unusable = unusableReason(names);
         this.watch = makeWatch(settings.polymarketSlug(), settings.kalshiEventTicker(), settings.gameStates());
+    }
+
+    private static double[] extraHedgeCosts(String[] venues, Map<String, Double> byVenue) {
+        double[] costs = new double[venues.length];
+        if (byVenue == null) {
+            return costs;
+        }
+        for (Map.Entry<String, Double> entry : byVenue.entrySet()) {
+            if (entry.getValue() == null || entry.getValue() < 0) {
+                throw new IllegalArgumentException(
+                        "venue_hedge_cost must be zero or more, got " + entry.getValue() + " for " + entry.getKey());
+            }
+        }
+        for (int v = 0; v < venues.length; v++) {
+            costs[v] = byVenue.getOrDefault(venues[v], 0.0);
+        }
+        return costs;
     }
 
     private static double fraction(String name, double value) {
@@ -694,7 +719,7 @@ public final class EsportsPmMaker extends StrategyAgent {
             return;
         }
         refreshListing(own, nowNanos);
-        ladder.addVenue(own, rival, takerRates[own.index()], sellRival[venue]);
+        ladder.addVenue(own, rival, takerRates[own.index()], extraHedgeCost[venue], sellRival[venue]);
     }
 
     private void sample(int team, Leg leg, long nowNanos) {

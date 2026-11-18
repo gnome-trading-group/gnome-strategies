@@ -3,6 +3,7 @@ package group.gnometrading.strategies.esports;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The maker's arguments as configured, by their config names; null where the config leaves one out. Defaults are
@@ -26,6 +27,7 @@ record Settings(
         @JsonProperty("round_up_remainder") Double roundUpRemainder,
         @JsonProperty("band_from_min_size") Boolean bandFromMinSize,
         @JsonProperty("sell_rival_venues") List<String> sellRivalVenues,
+        @JsonProperty("venue_hedge_cost") Map<String, Double> venueHedgeCost,
         @JsonProperty("book_depth") Integer bookDepth,
         @JsonProperty("processing_time_ns") Long processingTimeNs,
         @JsonProperty("league") String league,

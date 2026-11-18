@@ -28,7 +28,7 @@ class PricingTest {
 
     private static RouteLadder ladder(Leg own, Leg rival, double rate, boolean sellRival) {
         RouteLadder ladder = new RouteLadder(32);
-        ladder.addVenue(own, rival, rate, sellRival);
+        ladder.addVenue(own, rival, rate, 0.0, sellRival);
         ladder.sort();
         return ladder;
     }
@@ -86,6 +86,24 @@ class PricingTest {
 
     private static double fee(double rate, double price) {
         return rate * price * (1 - price);
+    }
+
+    @Test
+    void anExtraCostReordersVenuesWithoutChangingTheirPrices() {
+        Leg near = leg(0, new double[][] {{0.40, 100}}, new double[][] {{0.30, 100}});
+        Leg nearRival = leg(1, new double[][] {{0.70, 100}}, new double[][] {{0.55, 100}});
+        Leg far = leg(2, new double[][] {{0.41, 100}}, new double[][] {{0.30, 100}});
+        Leg farRival = leg(3, new double[][] {{0.70, 100}}, new double[][] {{0.55, 100}});
+        RouteLadder ladder = new RouteLadder(32);
+        ladder.addVenue(near, nearRival, 0.07, 0.02, false);
+        ladder.addVenue(far, farRival, 0.07, 0.0, false);
+        ladder.sort();
+
+        assertEquals(2, ladder.leg(0));
+        assertEquals(0, ladder.leg(1));
+        assertEquals(0.40, ladder.cost(1), EPS);
+        assertEquals(0.40, ladder.orderPrice(1), EPS);
+        assertEquals(0.40 + 0.07 * 0.40 * 0.60 + 0.02, ladder.allIn(1), EPS);
     }
 
     @Test
@@ -233,8 +251,8 @@ class PricingTest {
     /** Leg 0 asks 0.35, leg 1 asks 0.36: both buys of the same team. */
     private static RouteLadder twoLegs(double size0, double size1) {
         RouteLadder ladder = new RouteLadder(8);
-        ladder.add(0.35, size0, 0, RouteLadder.BUY, 0.35, 0.07);
-        ladder.add(0.36, size1, 1, RouteLadder.BUY, 0.36, 0.07);
+        ladder.add(0.35, size0, 0, RouteLadder.BUY, 0.35, 0.07, 0.0);
+        ladder.add(0.36, size1, 1, RouteLadder.BUY, 0.36, 0.07, 0.0);
         ladder.sort();
         return ladder;
     }
@@ -277,8 +295,8 @@ class PricingTest {
     @Test
     void anOrderWorthLessThanItsLegsSmallestNotionalMovesOn() {
         RouteLadder ladder = new RouteLadder(8);
-        ladder.add(0.10, 100, 0, RouteLadder.BUY, 0.10, 0.07);
-        ladder.add(0.11, 100, 1, RouteLadder.BUY, 0.11, 0.07);
+        ladder.add(0.10, 100, 0, RouteLadder.BUY, 0.10, 0.07, 0.0);
+        ladder.add(0.11, 100, 1, RouteLadder.BUY, 0.11, 0.07, 0.0);
         ladder.sort();
         OrderRules rules = rules(new double[] {0.01, 0, 1.0}, CENTS);
 
@@ -330,8 +348,8 @@ class PricingTest {
         assertEquals(OrderRules.WHOLE, Completion.smallestOrder(twoLegs(100, 100), 0.05, true, rules(WHOLE, WHOLE)));
         assertEquals(10_000, Completion.smallestOrder(twoLegs(100, 100), 0.05, true, rules(WHOLE, CENTS)));
         RouteLadder farApart = new RouteLadder(8);
-        farApart.add(0.35, 100, 0, RouteLadder.BUY, 0.35, 0.07);
-        farApart.add(0.45, 100, 1, RouteLadder.BUY, 0.45, 0.07);
+        farApart.add(0.35, 100, 0, RouteLadder.BUY, 0.35, 0.07, 0.0);
+        farApart.add(0.45, 100, 1, RouteLadder.BUY, 0.45, 0.07, 0.0);
         farApart.sort();
         assertEquals(
                 OrderRules.WHOLE,

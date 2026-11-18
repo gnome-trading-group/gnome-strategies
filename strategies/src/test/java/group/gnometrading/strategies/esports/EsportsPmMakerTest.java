@@ -6,6 +6,7 @@ import static group.gnometrading.strategies.esports.MakerHarness.quotes;
 import static group.gnometrading.strategies.esports.MakerHarness.takes;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import group.gnometrading.schemas.OrderRole;
@@ -242,6 +243,57 @@ class EsportsPmMakerTest {
         assertEquals(1201L, hedge.securityId(), "sell team A on Kalshi: B for 0.40");
         assertEquals(Side.Ask, hedge.takeSide());
         assertEquals(0.55, hedge.limit(), EPS, "down to 1 - (0.40 + 0.05)");
+    }
+
+    /** Kalshi's team B ask at 0.46 makes Kalshi the cheapest hedge for team A by fee alone, past depth_band. */
+    private static final Object[][] KALSHI_CHEAPEST =
+            with(BOOKS, 202, new double[][] {{0.46, 100}}, new double[][] {{0.42, 100}});
+
+    @Test
+    void aVenuesExtraHedgeCostMovesTheBidToTheOtherVenue() {
+        double kalshi = 0.46 + 0.07 * 0.46 * 0.54;
+        double pmus = 0.48 + 0.0695 * 0.48 * 0.52;
+
+        double plain = quotes(maker().feed(KALSHI_CHEAPEST, 0)).get(1101L)[0];
+        double charged = quotes(
+                        maker("venue_hedge_cost", Map.of("kalshi", 0.05)).feed(KALSHI_CHEAPEST, 0))
+                .get(1101L)[0];
+
+        assertEquals(Math.floor((1 - kalshi - 0.01) * 100) / 100, plain, EPS);
+        assertEquals(Math.floor((1 - pmus - 0.01) * 100) / 100, charged, EPS, "priced off Polymarket US now");
+    }
+
+    @Test
+    void aVenuesExtraHedgeCostSendsTheHedgeToTheOtherVenueAtItsOwnPrice() {
+        MakerHarness s = maker("venue_hedge_cost", Map.of("kalshi", 0.05));
+
+        Sent hedge = fillTeamA(s, KALSHI_CHEAPEST, 20).get(0);
+
+        assertEquals(1302L, hedge.securityId());
+        assertEquals(0.53, hedge.limit(), EPS, "the slippage cap is from the venue's price, not the charged one");
+    }
+
+    @Test
+    void anEmptyExtraHedgeCostQuotesAsWithoutOne() {
+        assertEquals(
+                quotes(maker().feed(KALSHI_CHEAPEST, 0)).get(1101L)[0],
+                quotes(maker("venue_hedge_cost", Map.of()).feed(KALSHI_CHEAPEST, 0))
+                        .get(1101L)[0],
+                EPS);
+    }
+
+    @Test
+    void anExtraHedgeCostForAVenueTheMatchDoesntListIsIgnored() {
+        assertEquals(
+                quotes(maker().feed(BOOKS, 0)).get(1101L)[0],
+                quotes(maker("venue_hedge_cost", Map.of("lighter", 0.5)).feed(BOOKS, 0))
+                        .get(1101L)[0],
+                EPS);
+    }
+
+    @Test
+    void aNegativeExtraHedgeCostIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> maker("venue_hedge_cost", Map.of("kalshi", -0.01)));
     }
 
     // ---- lots, minimums and remainders ---------------------------------------------------------------------------
