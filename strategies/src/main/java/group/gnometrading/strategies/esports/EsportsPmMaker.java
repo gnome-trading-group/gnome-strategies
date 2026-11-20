@@ -17,6 +17,7 @@ import group.gnometrading.sequencer.metrics.MetricRecorder;
 import group.gnometrading.sequencer.metrics.MetricStream;
 import group.gnometrading.sm.Listing;
 import group.gnometrading.sm.ListingSpec;
+import group.gnometrading.sm.PriceGrid;
 import group.gnometrading.sm.fee.FeeComponent;
 import group.gnometrading.sm.fee.FeeSchedule;
 import group.gnometrading.sm.fee.FeeTimeline;
@@ -67,8 +68,8 @@ import org.agrona.concurrent.EpochNanoClock;
  * {@code quote_guard} of 0 and the other bid only within it of 1.
  *
  * <p>Bids rest only while neither price they hang on has moved more than {@code calm_move} in the last
- * {@code calm_seconds} (off unless set). Every price is put on the tick the engine enforces now, rounded toward the
- * book for a take and away from it for a bid.
+ * {@code calm_seconds} (off unless set). Every price is put on the listing's price grid in force now, rounded toward
+ * the book for a take and away from it for a bid; a listing with no spec, whose orders the engine refuses, gets none.
  *
  * <p>The decision path allocates nothing: books, ladders and plans are arrays reused on every update.
  */
@@ -646,7 +647,10 @@ public final class EsportsPmMaker extends StrategyAgent {
             return false;
         }
         refreshListing(leg, nowNanos);
-        double tick = tick(leg, nowNanos);
+        PriceGrid grid = grid(leg, nowNanos);
+        if (grid == null) {
+            return false;
+        }
         double size = Math.min(quoteSize, maxLockedUsd);
         int at = leg.index();
         // Bids stay whole contracts: a fractional bid buys nothing a whole-contract hedge venue could cover.
@@ -656,14 +660,14 @@ public final class EsportsPmMaker extends StrategyAgent {
                 size,
                 minEdge,
                 makerRates[at],
-                tick,
+                grid,
                 leg.bestAsk(),
                 depthBand,
                 minOrder,
                 bandFromMinSize)) {
             return false;
         }
-        double price = compliant(leg, makerQuote.price(), false, nowNanos);
+        double price = compliant(grid, makerQuote.price(), false);
         double bestAsk = leg.bestAsk();
         if (price <= 0 || (!Double.isNaN(bestAsk) && price >= bestAsk)) {
             return false;
@@ -797,7 +801,7 @@ public final class EsportsPmMaker extends StrategyAgent {
             boolean buy = completion.direction(i) == RouteLadder.BUY;
             long limit = takeLimit(leg, completion.limit(i), buy, nowNanos);
             long scaledContracts = completion.scaledContracts(i);
-            // Putting the limit on the tick can take a sale's notional under the venue's minimum.
+            // Putting the limit on the grid can take a sale's notional under the venue's minimum.
             if (limit < 0
                     || !rules.valid(leg.index(), scaledContracts, limit / PRICE_SCALE)
                     || wasRejected(leg.index(), completion.direction(i), scaledContracts, limit)) {
@@ -821,13 +825,18 @@ public final class EsportsPmMaker extends StrategyAgent {
     }
 
     /**
-     * The order's scaled limit on the tick in force, rounded toward the book (a buy up, a sale down) so it still
-     * reaches the level it was costed on, and kept inside (0, 1); -1 where that leaves no price.
+     * The order's scaled limit on the grid in force, rounded toward the book (a buy up, a sale down) so it still
+     * reaches the level it was costed on, and kept inside (0, 1); -1 where that leaves no price or the listing has no
+     * spec.
      */
     private long takeLimit(Leg leg, double limit, boolean buy, long nowNanos) {
-        double tick = tick(leg, nowNanos);
-        double bounded = buy ? Math.min(limit, 1 - tick) : Math.max(limit, tick);
-        long scaled = Math.round(compliant(leg, bounded, buy, nowNanos) * PRICE_SCALE);
+        PriceGrid grid = grid(leg, nowNanos);
+        if (grid == null) {
+            return -1;
+        }
+        long wanted = Math.round(limit * PRICE_SCALE);
+        long bounded = buy ? Math.min(wanted, grid.max()) : Math.max(wanted, grid.min());
+        long scaled = buy ? grid.ceil(bounded) : grid.floor(bounded);
         return scaled > 0 && scaled < (long) PRICE_SCALE ? scaled : -1;
     }
 
@@ -960,21 +969,16 @@ public final class EsportsPmMaker extends StrategyAgent {
         rules.set(at, facts.spec(leg.listingId, nowNanos));
     }
 
-    /** The tick the engine enforces on the listing now; a cent where the registry has none. */
-    private double tick(Leg leg, long nowNanos) {
+    /** The price grid the engine enforces on the listing now; null without a spec, when it refuses every order. */
+    private PriceGrid grid(Leg leg, long nowNanos) {
         ListingSpec spec = facts.spec(leg.listingId, nowNanos);
-        return spec != null && spec.tickSize() > 0 ? spec.tickSize() / PRICE_SCALE : 0.01;
+        return spec != null ? spec.grid() : null;
     }
 
-    /** A price on the tick in force: rounded up when {@code up}, else down. */
-    private double compliant(Leg leg, double price, boolean up, long nowNanos) {
-        ListingSpec spec = facts.spec(leg.listingId, nowNanos);
+    /** A price on the grid: rounded up when {@code up}, else down. */
+    private static double compliant(PriceGrid grid, double price, boolean up) {
         long scaled = Math.round(price * PRICE_SCALE);
-        long tick = spec != null ? spec.tickSize() : 0;
-        if (tick > 0) {
-            scaled = up ? -Math.floorDiv(-scaled, tick) * tick : Math.floorDiv(scaled, tick) * tick;
-        }
-        return scaled / PRICE_SCALE;
+        return (up ? grid.ceil(scaled) : grid.floor(scaled)) / PRICE_SCALE;
     }
 
     // ---- orders -----------------------------------------------------------------------------------------------

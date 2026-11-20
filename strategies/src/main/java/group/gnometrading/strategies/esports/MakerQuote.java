@@ -1,9 +1,11 @@
 package group.gnometrading.strategies.esports;
 
+import group.gnometrading.sm.PriceGrid;
+
 /**
  * The bid to rest on one team so that, if it fills, buying the other team elsewhere at today's prices still locks
- * min_edge per pair: the highest tick whose cost with the maker fee leaves min_edge below $1 after the deepest hedge
- * level the size reaches, one tick under the best ask so it rests rather than takes.
+ * min_edge per pair: the highest price on the listing's grid whose cost with the maker fee leaves min_edge below $1
+ * after the deepest hedge level the size reaches, one grid step under the best ask so it rests rather than takes.
  *
  * <p>The size is what the hedge ladder offers within {@code depthBand} of an anchor level, up to the quote size. The
  * anchor is the level where the hedge first adds up to the smallest order the quoted listing takes, so a level too
@@ -13,6 +15,7 @@ package group.gnometrading.strategies.esports;
 final class MakerQuote {
 
     private static final double EPS = 1e-9;
+    private static final double PRICE_SCALE = 1e9;
 
     private double price;
     private double size;
@@ -25,7 +28,7 @@ final class MakerQuote {
         return size;
     }
 
-    /** Replaces the computed bid, once the caller has put it on the tick in force. */
+    /** Replaces the computed bid, once the caller has put it on the grid in force. */
     void override(double newPrice, double newSize) {
         price = newPrice;
         size = newSize;
@@ -37,7 +40,7 @@ final class MakerQuote {
             double quoteSize,
             double minEdge,
             double makerRate,
-            double tick,
+            PriceGrid grid,
             double bestAsk,
             double depthBand,
             double minOrder,
@@ -56,16 +59,15 @@ final class MakerQuote {
             total += Math.min(hedge.size(i), quoteSize - total);
             worst = hedge.allIn(i);
         }
-        double bid = highestBid(1 - worst - minEdge, makerRate, tick);
+        long bid = highestBid(1 - worst - minEdge, makerRate, grid);
         if (!Double.isNaN(bestAsk)) {
-            bid = Math.min(bid, bestAsk - tick);
+            bid = Math.min(bid, grid.down(grid.ceil(Math.round(bestAsk * PRICE_SCALE)), 1));
         }
-        bid = Math.round(bid / tick) * tick;
         double contracts = Math.floor(total + EPS);
-        if (bid < tick || contracts < 1) {
+        if (bid < grid.min() || contracts < 1) {
             return false;
         }
-        price = Math.round(bid * 1e10) / 1e10;
+        price = bid / PRICE_SCALE;
         size = contracts;
         return true;
     }
@@ -82,12 +84,20 @@ final class MakerQuote {
         return hedge.count() - 1;
     }
 
-    /** The highest tick whose cost with the maker fee stays within {@code budget}. */
-    private static double highestBid(double budget, double makerRate, double tick) {
-        double bid = Math.floor(budget / tick + EPS) * tick;
-        while (bid > 0 && bid + makerRate * bid * (1 - bid) > budget + 1e-12) {
-            bid -= tick;
+    /** The highest grid price whose cost with the maker fee stays within {@code budget}, scaled; 0 for none. */
+    private static long highestBid(double budget, double makerRate, PriceGrid grid) {
+        if (budget < grid.min() / PRICE_SCALE) {
+            return 0;
+        }
+        long bid = grid.floor(Math.min(Math.round(budget * PRICE_SCALE), grid.max()));
+        while (bid > 0 && cost(bid, makerRate) > budget + 1e-12) {
+            bid = grid.down(bid, 1);
         }
         return bid;
+    }
+
+    private static double cost(long scaledBid, double makerRate) {
+        double bid = scaledBid / PRICE_SCALE;
+        return bid + makerRate * bid * (1 - bid);
     }
 }

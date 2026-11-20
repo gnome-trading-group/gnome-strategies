@@ -89,6 +89,16 @@ class EsportsPmMakerTest {
     // ---- quoting ------------------------------------------------------------------------------------------------
 
     @Test
+    void aListingWithNoSpecGetsNoBidSinceTheEngineWouldRefuseIt() {
+        Map<Integer, double[]> specs = MakerHarness.venueSpecs(1);
+        specs.put(101, null);
+        Map<Long, double[]> q = quotes(on(ALL_THREE, specs, "min_edge", 0.01).feed(BOOKS, 0));
+
+        assertFalse(q.containsKey(1101L));
+        assertTrue(q.containsKey(1102L));
+    }
+
+    @Test
     void bidsEachTeamPostOnlyFromTheCheapestHedge() {
         MakerHarness s = maker("min_edge", 0.01);
         List<Sent> sent = s.feed(BOOKS, 0);

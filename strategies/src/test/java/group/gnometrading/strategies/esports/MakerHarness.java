@@ -23,6 +23,7 @@ import group.gnometrading.sequencer.SequencedRingBuffer;
 import group.gnometrading.sm.Exchange;
 import group.gnometrading.sm.Listing;
 import group.gnometrading.sm.ListingSpec;
+import group.gnometrading.sm.PriceGrid;
 import group.gnometrading.sm.Security;
 import group.gnometrading.sm.fee.FeeComponent;
 import group.gnometrading.sm.fee.FeeKind;
@@ -387,7 +388,7 @@ final class MakerHarness {
         return new Stream(10_000 + listingId, 1, "SRC", "LISTING", listingId, null, "BOOK", null, 0, 0, 0, true);
     }
 
-    /** The registry's facts on the fixture listings: a one-cent tick, the venues' fee curves, and order rules. */
+    /** The registry's facts on the fixture listings: a one-cent grid, the venues' fee curves, and order rules. */
     static final class FakeFacts implements ListingFacts {
         private final Int2ObjectHashMap<Listing> listings = new Int2ObjectHashMap<>();
         private final Int2ObjectHashMap<FeeTimeline> fees = new Int2ObjectHashMap<>();
@@ -420,12 +421,16 @@ final class MakerHarness {
                                 "SEC"));
                 double taker = exchangeId == PMI ? 0.05 : exchangeId == KALSHI ? 0.07 : 0.0695;
                 fees.put(listingId, timeline(taker, 0.0));
+                // A listing given a null spec has none, as one the registry hasn't specced yet.
                 double[] spec = given.getOrDefault(listingId, new double[] {0, 0, 0});
+                if (spec == null) {
+                    continue;
+                }
                 specs.put(
                         listingId,
                         new ListingSpec(
                                 listingId,
-                                10_000_000L,
+                                PriceGrid.single(10_000_000L, 1_000_000_000L),
                                 Math.round(spec[0] * SIZE),
                                 Math.round(spec[2] * PRICE),
                                 1,

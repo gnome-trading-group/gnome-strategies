@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import group.gnometrading.sm.ListingSpec;
+import group.gnometrading.sm.PriceGrid;
 import org.junit.jupiter.api.Test;
 
 /** The ladder, bid and hedge maths: the Python strategy's decision and quoting tests, plus the hedging changes. */
@@ -44,7 +45,7 @@ class PricingTest {
                             ? null
                             : new ListingSpec(
                                     100 + i,
-                                    10_000_000L,
+                                    PriceGrid.single(10_000_000L, 1_000_000_000L),
                                     Math.round(leg[0] * 1e6),
                                     Math.round(leg[2] * 1e9),
                                     1,
@@ -55,6 +56,11 @@ class PricingTest {
 
     private static final double[] WHOLE = {1, 0, 0};
     private static final double[] CENTS = {0.01, 0, 0};
+    private static final PriceGrid CENT_GRID = PriceGrid.single(10_000_000L, 1_000_000_000L);
+    private static final PriceGrid TAPERED = PriceGrid.of(
+            new long[] {0, 100_000_000L, 900_000_000L},
+            new long[] {100_000_000L, 900_000_000L, 1_000_000_000L},
+            new long[] {1_000_000L, 10_000_000L, 1_000_000L});
 
     private static Completion plan(RouteLadder ladder, double wanted, boolean cross, OrderRules rules) {
         return plan(ladder, wanted, cross, rules, 0, OrderRules.NONE);
@@ -125,7 +131,7 @@ class PricingTest {
                 false);
         MakerQuote quote = new MakerQuote();
 
-        assertTrue(quote.compute(hedge, 200, 0.01, 0.0, 0.01, 0.60, 0.01, 1, true));
+        assertTrue(quote.compute(hedge, 200, 0.01, 0.0, CENT_GRID, 0.60, 0.01, 1, true));
         assertEquals(80, quote.size(), EPS);
         assertEquals(0.56, quote.price(), EPS);
         assertTrue(quote.price() <= 1 - (0.405 + fee(0.0695, 0.405)) - 0.01);
@@ -139,13 +145,44 @@ class PricingTest {
                 0.0695,
                 false);
         MakerQuote quote = new MakerQuote();
-        assertTrue(quote.compute(hedge, 200, 0.01, 0.0, 0.01, 0.55, 0.01, 1, true));
+        assertTrue(quote.compute(hedge, 200, 0.01, 0.0, CENT_GRID, 0.55, 0.01, 1, true));
         assertEquals(0.54, quote.price(), EPS);
     }
 
     @Test
+    void aTaperedGridBidsInTenthsOfACentInItsTails() {
+        RouteLadder hedge = ladder(
+                leg(0, new double[][] {{0.9345, 50}}, new double[][] {}),
+                leg(1, new double[][] {}, new double[][] {}),
+                0.0,
+                false);
+        MakerQuote tapered = new MakerQuote();
+        MakerQuote cents = new MakerQuote();
+
+        assertTrue(tapered.compute(hedge, 200, 0.01, 0.0, TAPERED, Double.NaN, 0.01, 1, true));
+        assertTrue(cents.compute(hedge, 200, 0.01, 0.0, CENT_GRID, Double.NaN, 0.01, 1, true));
+
+        assertEquals(0.055, tapered.price(), EPS);
+        assertEquals(0.05, cents.price(), EPS);
+    }
+
+    @Test
+    void theBidStaysOneGridStepUnderAnAskOnABandEdge() {
+        RouteLadder hedge = ladder(
+                leg(0, new double[][] {{0.30, 50}}, new double[][] {}),
+                leg(1, new double[][] {}, new double[][] {}),
+                0.0,
+                false);
+        MakerQuote quote = new MakerQuote();
+
+        assertTrue(quote.compute(hedge, 200, 0.01, 0.0, TAPERED, 0.10, 0.01, 1, true));
+
+        assertEquals(0.099, quote.price(), EPS);
+    }
+
+    @Test
     void noBidWithoutAHedge() {
-        assertFalse(new MakerQuote().compute(new RouteLadder(4), 200, 0.01, 0.0, 0.01, 0.5, 0.01, 1, true));
+        assertFalse(new MakerQuote().compute(new RouteLadder(4), 200, 0.01, 0.0, CENT_GRID, 0.5, 0.01, 1, true));
     }
 
     @Test
@@ -165,9 +202,9 @@ class PricingTest {
         MakerQuote cheapest = new MakerQuote();
         MakerQuote plain = new MakerQuote();
 
-        assertTrue(anchored.compute(hedge, 200, 0.01, 0.0, 0.01, 0.70, 0.01, 5, true));
-        assertTrue(cheapest.compute(hedge, 200, 0.01, 0.0, 0.01, 0.70, 0.01, 5, false));
-        assertTrue(plain.compute(without, 200, 0.01, 0.0, 0.01, 0.70, 0.01, 5, true));
+        assertTrue(anchored.compute(hedge, 200, 0.01, 0.0, CENT_GRID, 0.70, 0.01, 5, true));
+        assertTrue(cheapest.compute(hedge, 200, 0.01, 0.0, CENT_GRID, 0.70, 0.01, 5, false));
+        assertTrue(plain.compute(without, 200, 0.01, 0.0, CENT_GRID, 0.70, 0.01, 5, true));
 
         assertEquals(46, anchored.size(), EPS);
         assertEquals(plain.price(), anchored.price(), EPS, "the bid is the one the 45 alone would make");
